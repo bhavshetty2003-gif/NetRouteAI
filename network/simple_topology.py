@@ -26,4 +26,4 @@ print("Network Started Successfully!")
 
 CLI(net)
 
-net.stop(
+net.stop()
