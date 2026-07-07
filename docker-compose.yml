@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  r1:
+    image: frrouting/frr:latest
+    container_name: r1
+    privileged: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./network/routers/r1:/etc/frr
+    networks:
+      lan1:
+        ipv4_address: 10.0.1.2
+      transit:
+        ipv4_address: 192.168.12.2
+
+
+  r2:
+    image: frrouting/frr:latest
+    container_name: r2
+    privileged: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./network/routers/r2:/etc/frr
+    networks:
+      lan2:
+        ipv4_address: 10.0.2.2
+      transit:
+        ipv4_address: 192.168.12.3
+
+  pc1:
+    image: alpine:latest
+    container_name: pc1
+    stdin_open: true
+    tty: true
+    command: sh -c "sleep infinity"
+    privileged: true
+    networks:
+      lan1:
+        ipv4_address: 10.0.1.10
+
+  pc2:
+    image: alpine:latest
+    container_name: pc2
+    stdin_open: true
+    tty: true
+    command: sh -c "sleep infinity"
+    privileged: true
+    networks:
+      lan2:
+        ipv4_address: 10.0.2.10        
+
+networks:
+  lan1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.1.0/24
+
+  transit:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.12.0/29
+
+  lan2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.2.0/24
+        
+

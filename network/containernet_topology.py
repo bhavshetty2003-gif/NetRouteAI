@@ -1,84 +1,137 @@
 #!/usr/bin/env python3
 
-import os 
-
 from mininet.net import Containernet
 from mininet.node import Docker, OVSKernelSwitch
-from mininet.cli import CLI
 from mininet.link import TCLink
+from mininet.cli import CLI
 
 
-net = Containernet(
-    controller=None,
-    link=TCLink
-)
+class NetRouteTopology:
 
-BASE_DIR = "/home/bhavesh-shetty/NetRouteAI/network"
+    def __init__(self):
+        self.net = Containernet(
+            controller=None,
+            link=TCLink
+        )
 
-print("*** Adding Hosts")
-h1 = net.addHost("h1", ip="10.0.1.10/24")
-h2 = net.addHost("h2", ip="10.0.2.10/24")
+    def create(self):
 
-print("*** Adding FRR Routers")
+        BASE_DIR = "/home/bhavesh-shetty/NetRouteAI/network"
 
-r1 = net.addDocker(
-    "r1",
-    ip=None,
-    dimage="frrouting/frr:latest",
-   volumes=[
-    f"{BASE_DIR}/configs/r1:/etc/frr"
-],
-    privileged=True
-)
+        print("*** Creating Hosts")
 
-r2 = net.addDocker(
-    "r2",
-    ip=None,
-    dimage="frrouting/frr:latest",
-    volumes=[
-    f"{BASE_DIR}/configs/r2:/etc/frr"
-],
-    privileged=True
-)
-print("*** Adding Switches")
+        self.h1 = self.net.addHost(
+            "h1",
+            ip="10.0.1.10/24"
+        )
 
-s1 = net.addSwitch("s1", cls=OVSKernelSwitch)
-s2 = net.addSwitch("s2", cls=OVSKernelSwitch)
-print("*** Creating Links")
+        self.h2 = self.net.addHost(
+            "h2",
+            ip="10.0.2.10/24"
+        )
 
-net.addLink(h1, s1)
-net.addLink(s1, r1)
+        print("*** Creating Routers")
 
-net.addLink(r1, r2)
+        self.r1 = self.net.addDocker(
+            "r1",
+            dimage="frrouting/frr:latest",
+            ip=None,
+            cap_add=[
+                "NET_ADMIN",
+                "NET_RAW",
+                "SYS_ADMIN"
+            ],
+            volumes=[
+                f"{BASE_DIR}/routers/r1:/etc/frr"
+            ]
+        )
 
-net.addLink(r2, s2)
-net.addLink(s2, h2)
-print("*** Starting Network")
+        self.r2 = self.net.addDocker(
+            "r2",
+            dimage="frrouting/frr:latest",
+            ip=None,
+            cap_add=[
+                "NET_ADMIN",
+                "NET_RAW",
+                "SYS_ADMIN"
+            ],
+            volumes=[
+                f"{BASE_DIR}/routers/r2:/etc/frr"
+            ]
+        )
 
-net.start()
-print("*** Configuring Router Interfaces")
-r1.cmd("sysctl -w net.ipv4.ip_forward=1")
-r2.cmd("sysctl -w net.ipv4.ip_forward=1")
+        print("*** Creating Switches")
 
-# r1
-r1.cmd("ip addr add 10.0.1.1/24 dev r1-eth0")
-r1.cmd("ip addr add 192.168.12.1/30 dev r1-eth1")
+        self.s1 = self.net.addSwitch(
+            "s1",
+            cls=OVSKernelSwitch
+        )
 
-# r2
-r2.cmd("ip addr add 192.168.12.2/30 dev r2-eth0")
-r2.cmd("ip addr add 10.0.2.1/24 dev r2-eth1")
-print("*** Configuring Host Routes")
+        self.s2 = self.net.addSwitch(
+            "s2",
+            cls=OVSKernelSwitch
+        )
 
-r1.cmd("ip link set r1-eth0 up")
-r1.cmd("ip link set r1-eth1 up")
+        print("*** Creating Links")
 
-r2.cmd("ip link set r2-eth0 up")
-r2.cmd("ip link set r2-eth1 up")
+        self.net.addLink(self.h1, self.s1)
+        self.net.addLink(self.s1, self.r1)
 
-h1.cmd("ip route add default via 10.0.1.1")
-h2.cmd("ip route add default via 10.0.2.1")
-print("*** Network Ready")
+        self.net.addLink(
+            self.r1,
+            self.r2,
+            cls=TCLink,
+            bw=100,
+            delay="2ms",
+            loss=0
+        )
 
-CLI(net)
+        self.net.addLink(self.r2, self.s2)
+        self.net.addLink(self.s2, self.h2)
 
-net.stop()
+    def start(self):
+
+        print("*** Starting Network")
+        self.net.start()
+        self.s1.cmd("ovs-ofctl add-flow s1 actions=normal")
+        self.s2.cmd("ovs-ofctl add-flow s2 actions=normal")
+        print("*** Starting FRR")
+
+        self.r1.cmd("/usr/lib/frr/docker-start &")
+        self.r2.cmd("/usr/lib/frr/docker-start &")
+
+        self.r1.cmd("sysctl -w net.ipv4.ip_forward=1")
+        self.r2.cmd("sysctl -w net.ipv4.ip_forward=1")
+
+        # Bring interfaces up
+        self.r1.cmd("ip link set r1-eth0 up")
+        self.r1.cmd("ip link set r1-eth1 up")
+        self.r2.cmd("ip link set r2-eth0 up")
+        self.r2.cmd("ip link set r2-eth1 up")
+
+        # Router IPs
+        self.r1.cmd("ip addr add 10.0.1.1/24 dev r1-eth0")
+        self.r1.cmd("ip addr add 192.168.12.1/30 dev r1-eth1")
+
+        self.r2.cmd("ip addr add 192.168.12.2/30 dev r2-eth0")
+        self.r2.cmd("ip addr add 10.0.2.1/24 dev r2-eth1")
+
+        # Host routes
+        self.h1.cmd("ip route add default via 10.0.1.1")
+        self.h2.cmd("ip route add default via 10.0.2.1")
+
+        print("*** Network Ready")
+
+    def cli(self):
+        CLI(self.net)
+
+    def stop(self):
+        self.net.stop()
+
+
+if __name__ == "__main__":
+    topo = NetRouteTopology()
+    topo.create()
+    topo.start()
+    topo.cli()
+    topo.stop()
