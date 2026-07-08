@@ -1,19 +1,23 @@
 import MetricCard from "../../components/MetricCard/MetricCard";
 import ActivityPanel from "../../components/ActivityPanel/ActivityPanel";
 import { dashboardMetrics } from "../../data/dashboardData";
-import AIRecommendation from "../../components/AIRecommendation/AIRecommendation";
 
 function Dashboard() {
+  const user = JSON.parse(
+    localStorage.getItem("user") || "{}"
+  );
+
   return (
-    <div>
+    <div className="h-full">
+
       {/* Page Title */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white">
-          Dashboard
+          Welcome, {user.name || "User"} 👋
         </h1>
 
         <p className="text-gray-400 mt-2">
-          Monitor your intelligent network in real time.
+          Here's an overview of your AI-powered network.
         </p>
       </div>
 
@@ -33,9 +37,9 @@ function Dashboard() {
         })}
       </div>
 
-       <ActivityPanel />
-
-       <AIRecommendation />
+      <div className="mt-8">
+        <ActivityPanel />
+      </div>
 
     </div>
   );

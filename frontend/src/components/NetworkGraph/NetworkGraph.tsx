@@ -2,7 +2,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   type Node,
   type Edge,
   type NodeTypes,
@@ -14,6 +13,7 @@ import CustomNode from "../CustomNode/CustomNode";
 import routerData from "../../data/routerData";
 
 type NetworkGraphProps = {
+  aiEnabled: boolean;
   setSelectedRouter: React.Dispatch<
     React.SetStateAction<keyof typeof routerData>
   >;
@@ -50,50 +50,53 @@ const nodes: Node[] = [
   },
 ];
 
-const edges: Edge[] = [
-  {
-    id: "e1-2",
-    source: "1",
-    target: "2",
-    animated: true,
-    style: {
-      stroke: "#22c55e",
-      strokeWidth: 3,
+function NetworkGraph({
+  aiEnabled,
+  setSelectedRouter,
+}: NetworkGraphProps) {
+  const edges: Edge[] = [
+    {
+      id: "e1-2",
+      source: "1",
+      target: "2",
+      animated: true,
+      style: {
+        stroke: aiEnabled ? "#475569" : "#22c55e",
+        strokeWidth: 3,
+      },
     },
-  },
-  {
-    id: "e1-3",
-    source: "1",
-    target: "3",
-    animated: true,
-    style: {
-      stroke: "#06b6d4",
-      strokeWidth: 3,
+    {
+      id: "e2-4",
+      source: "2",
+      target: "4",
+      animated: true,
+      style: {
+        stroke: aiEnabled ? "#475569" : "#22c55e",
+        strokeWidth: 3,
+      },
     },
-  },
-  {
-    id: "e2-4",
-    source: "2",
-    target: "4",
-    animated: true,
-    style: {
-      stroke: "#22c55e",
-      strokeWidth: 3,
+    {
+      id: "e1-3",
+      source: "1",
+      target: "3",
+      animated: true,
+      style: {
+        stroke: aiEnabled ? "#06b6d4" : "#64748b",
+        strokeWidth: 3,
+      },
     },
-  },
-  {
-    id: "e3-4",
-    source: "3",
-    target: "4",
-    animated: true,
-    style: {
-      stroke: "#06b6d4",
-      strokeWidth: 3,
+    {
+      id: "e3-4",
+      source: "3",
+      target: "4",
+      animated: true,
+      style: {
+        stroke: aiEnabled ? "#06b6d4" : "#64748b",
+        strokeWidth: 3,
+      },
     },
-  },
-];
+  ];
 
-function NetworkGraph({ setSelectedRouter }: NetworkGraphProps) {
   return (
     <div className="w-full h-full">
       <ReactFlow
@@ -103,18 +106,13 @@ function NetworkGraph({ setSelectedRouter }: NetworkGraphProps) {
         fitView
         proOptions={{ hideAttribution: true }}
         onNodeClick={(_, node) => {
-  const label = (node.data as { label: string }).label;
+          const label = (node.data as { label: string }).label;
 
-  if (label.startsWith("Router")) {
-    setSelectedRouter(label as keyof typeof routerData);
-  }
-}}
+          if (label.startsWith("Router")) {
+            setSelectedRouter(label as keyof typeof routerData);
+          }
+        }}
       >
-        <MiniMap
-  style={{
-    background: "#0f172a",
-  }}
-/>
         <Controls />
         <Background />
       </ReactFlow>

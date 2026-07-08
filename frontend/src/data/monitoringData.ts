@@ -1,0 +1,38 @@
+export const monitoringData = [
+  {
+    id: 1,
+    name: "Router R1",
+    status: "Online",
+    cpu: 32,
+    memory: 61,
+    latency: "8 ms",
+    uptime: "12d 4h",
+  },
+  {
+    id: 2,
+    name: "Router R2",
+    status: "Warning",
+    cpu: 62,
+    memory: 74,
+    latency: "15 ms",
+    uptime: "10d 8h",
+  },
+  {
+    id: 3,
+    name: "Router R3",
+    status: "Online",
+    cpu: 41,
+    memory: 52,
+    latency: "7 ms",
+    uptime: "15d 2h",
+  },
+  {
+    id: 4,
+    name: "PC1",
+    status: "Online",
+    cpu: 18,
+    memory: 35,
+    latency: "2 ms",
+    uptime: "6d 18h",
+  },
+];

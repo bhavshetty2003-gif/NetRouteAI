@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Cpu,
   MemoryStick,
@@ -12,7 +13,23 @@ type RouterInfoProps = {
 };
 
 function RouterInfo({ selectedRouter }: RouterInfoProps) {
-  const router = routerData[selectedRouter];
+  const [router, setRouter] = useState(routerData[selectedRouter]);
+
+useEffect(() => {
+  setRouter(routerData[selectedRouter]);
+
+  const interval = setInterval(() => {
+    setRouter((prev) => ({
+      ...prev,
+      cpu: `${Math.floor(Math.random() * 40) + 20}%`,
+      memory: `${Math.floor(Math.random() * 30) + 50}%`,
+      latency: `${Math.floor(Math.random() * 20) + 5} ms`,
+      packetLoss: `${(Math.random() * 1).toFixed(1)}%`,
+    }));
+  }, 3000);
+
+  return () => clearInterval(interval);
+}, [selectedRouter]);
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 h-full">

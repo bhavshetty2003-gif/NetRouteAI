@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Bot } from "lucide-react";
+
 import NetworkGraph from "../../components/NetworkGraph/NetworkGraph";
 import RouterInfo from "../../components/RouterInfo/RouterInfo";
 import AIRecommendation from "../../components/AIRecommendation/AIRecommendation";
@@ -9,9 +11,10 @@ function Topology() {
     keyof typeof routerData
   >("Router R1");
 
-  return (
-    <div className="h-[calc(100vh-90px)] flex flex-col">
+  const [aiEnabled, setAiEnabled] = useState(false);
 
+  return (
+    <div className="h-full flex flex-col">
       {/* Heading */}
       <div className="mb-4">
         <h1 className="text-3xl font-bold text-white">
@@ -24,7 +27,7 @@ function Topology() {
       </div>
 
       {/* Main Layout */}
-      <div className="grid grid-cols-4 gap-6 flex-1 min-h-0">
+      <div className="grid grid-cols-4 gap-6 flex-1">
 
         {/* Left Side */}
         <div className="col-span-3">
@@ -38,20 +41,36 @@ function Topology() {
                 Live Network Map
               </h2>
 
-              <div className="flex gap-6">
+              <div className="flex items-center gap-4">
 
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                  <span className="text-gray-300 text-sm">
-                    OSPF Route
-                  </span>
-                </div>
+                <button
+                  onClick={() => setAiEnabled(!aiEnabled)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                    aiEnabled
+                      ? "bg-cyan-500 text-white"
+                      : "bg-slate-800 text-cyan-400 hover:bg-slate-700"
+                  }`}
+                >
+                  <Bot size={18} />
+                  {aiEnabled ? "AI Enabled" : "Run AI Routing"}
+                </button>
 
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-cyan-400"></div>
-                  <span className="text-gray-300 text-sm">
-                    AI Route
-                  </span>
+                <div className="flex gap-6">
+
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                    <span className="text-gray-300 text-sm">
+                      OSPF Route
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-cyan-400"></div>
+                    <span className="text-gray-300 text-sm">
+                      AI Route
+                    </span>
+                  </div>
+
                 </div>
 
               </div>
@@ -60,11 +79,10 @@ function Topology() {
 
             {/* Graph */}
             <div className="flex-1 rounded-xl border border-slate-700 overflow-hidden">
-
               <NetworkGraph
-                setSelectedRouter={setSelectedRouter}
-              />
-
+  aiEnabled={aiEnabled}
+  setSelectedRouter={setSelectedRouter}
+/>
             </div>
 
           </div>
@@ -76,7 +94,7 @@ function Topology() {
 
           <RouterInfo selectedRouter={selectedRouter} />
 
-          <AIRecommendation />
+          <AIRecommendation aiEnabled={aiEnabled} />
 
         </div>
 

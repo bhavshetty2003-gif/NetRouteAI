@@ -4,6 +4,7 @@ import MainLayout from "./layout/MainLayout";
 
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
+import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import Topology from "./pages/Topology";
 import Analytics from "./pages/Analytics";
@@ -13,6 +14,8 @@ import Settings from "./pages/Settings";
 import Documentation from "./pages/Documentation";
 import NotFound from "./pages/NotFound";
 import ServerError from "./pages/ServerError";
+import ProtectedRoute from "./components/ProtectedRoute/ProtectedRoute";
+import NetworkDesigner from "./pages/NetworkDesigner";
 
 function App() {
   return (
@@ -20,9 +23,16 @@ function App() {
       {/* Public Routes */}
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
 
       {/* Dashboard Layout */}
-      <Route element={<MainLayout />}>
+      <Route
+  element={
+    <ProtectedRoute>
+      <MainLayout />
+    </ProtectedRoute>
+  }
+>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/topology" element={<Topology />} />
         <Route path="/analytics" element={<Analytics />} />
@@ -30,6 +40,7 @@ function App() {
         <Route path="/monitoring" element={<Monitoring />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/documentation" element={<Documentation />} />
+        <Route path="/designer" element={<NetworkDesigner />} />
       </Route>
 
       {/* Error Pages */}
