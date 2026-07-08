@@ -4,6 +4,8 @@ from mininet.net import Containernet
 from mininet.node import Docker, OVSKernelSwitch
 from mininet.link import TCLink
 from mininet.cli import CLI
+from threading import Thread
+from traffic_monitor import TrafficMonitor
 
 
 class NetRouteTopology:
@@ -121,8 +123,25 @@ class NetRouteTopology:
         self.h2.cmd("ip route add default via 10.0.2.1")
 
         print("*** Network Ready")
+        
+
 
     def cli(self):
+
+        import time
+
+        print("*** Waiting for routing convergence...")
+        time.sleep(15)
+
+        print("*** Starting Traffic Monitor")
+
+        monitor = TrafficMonitor(self.net)
+
+        Thread(
+        target=monitor.run,
+        daemon=True
+        ).start()
+
         CLI(self.net)
 
     def stop(self):

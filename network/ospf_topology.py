@@ -96,12 +96,18 @@ r1.cmd("ip addr add 192.168.12.1/30 dev r1-eth1")
 r2.cmd("ip addr add 192.168.12.2/30 dev r2-eth0")
 r2.cmd("ip addr add 10.0.2.1/24 dev r2-eth1")
 
+
+
+
 # Bring interfaces up
 r1.cmd("ip link set r1-eth0 up")
 r1.cmd("ip link set r1-eth1 up")
 
 r2.cmd("ip link set r2-eth0 up")
 r2.cmd("ip link set r2-eth1 up")
+
+
+time.sleep(2)
 
 # Default gateways
 h1.cmd("ip route add default via 10.0.1.1")
