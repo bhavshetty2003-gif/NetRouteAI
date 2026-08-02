@@ -1,0 +1,95 @@
+services:
+  r1:
+    image: frrouting/frr:latest
+    container_name: r1
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./r1/frr.conf:/etc/frr/frr.conf
+    networks:
+      net12:
+
+  r2:
+    image: frrouting/frr:latest
+    container_name: r2
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./r2/frr.conf:/etc/frr/frr.conf
+    networks:
+      net12:
+      net23:
+
+  r3:
+    image: frrouting/frr:latest
+    container_name: r3
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./r3/frr.conf:/etc/frr/frr.conf
+    networks:
+      net23:
+      net34:
+      net37:
+
+  r4:
+    image: frrouting/frr:latest
+    container_name: r4
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./r4/frr.conf:/etc/frr/frr.conf
+    networks:
+      net34:
+      net45:
+
+  r5:
+    image: frrouting/frr:latest
+    container_name: r5
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./r5/frr.conf:/etc/frr/frr.conf
+    networks:
+      net45:
+      net56:
+
+  r6:
+    image: frrouting/frr:latest
+    container_name: r6
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./r6/frr.conf:/etc/frr/frr.conf
+    networks:
+      net56:
+
+  r7:
+    image: frrouting/frr:latest
+    container_name: r7
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./r7/frr.conf:/etc/frr/frr.conf
+    networks:
+      net37:
+      net78:
+
+  r8:
+    image: frrouting/frr:latest
+    container_name: r8
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./r8/frr.conf:/etc/frr/frr.conf
+    networks:
+      net78:
+
+networks:
+  net12:
+  net23:
+  net34:
+  net45:
+  net56:
+  net37:
+  net78:
