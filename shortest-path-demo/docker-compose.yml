@@ -1,0 +1,54 @@
+services:
+  a:
+    image: frrouting/frr:latest
+    container_name: ra
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./a/frr.conf:/etc/frr/frr.conf
+    networks: [ab, ac, ad]
+
+  b:
+    image: frrouting/frr:latest
+    container_name: rb
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./b/frr.conf:/etc/frr/frr.conf
+    networks: [ab, bc]
+
+  c:
+    image: frrouting/frr:latest
+    container_name: rc
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./c/frr.conf:/etc/frr/frr.conf
+    networks: [ac, bc, cd, ce]
+
+  d:
+    image: frrouting/frr:latest
+    container_name: rd
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./d/frr.conf:/etc/frr/frr.conf
+    networks: [ad, cd, de]
+
+  e:
+    image: frrouting/frr:latest
+    container_name: re
+    privileged: true
+    command: /usr/lib/frr/docker-start
+    volumes:
+      - ./e/frr.conf:/etc/frr/frr.conf
+    networks: [ce, de]
+
+networks:
+  ab:
+  ac:
+  ad:
+  bc:
+  cd:
+  ce:
+  de:
