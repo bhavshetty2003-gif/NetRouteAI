@@ -1,0 +1,506 @@
+name: enterprise-ospf-lab
+services:
+  pc1:
+    command:
+      - sleep
+      - infinity
+    container_name: pc1
+    image: alpine
+    networks:
+      lan1:
+        ipv4_address: 192.168.10.100
+  pc2:
+    command:
+      - sleep
+      - infinity
+    container_name: pc2
+    image: alpine
+    networks:
+      lan2:
+        ipv4_address: 192.168.20.100
+  r1:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r1
+    image: frrouting/frr:latest
+    networks:
+      r1_r2:
+        ipv4_address: 10.0.0.1
+      r1_r12:
+        ipv4_address: 10.0.0.5
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r1/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r2:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r2
+    image: frrouting/frr:latest
+    networks:
+      r1_r2:
+        ipv4_address: 10.0.0.2
+      r2_r3:
+        ipv4_address: 10.0.0.9
+      r2_r11:
+        ipv4_address: 10.0.0.13
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r2/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r3:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r3
+    image: frrouting/frr:latest
+    networks:
+      r2_r3:
+        ipv4_address: 10.0.0.10
+      r3_r4:
+        ipv4_address: 10.1.0.1
+      r3_r7:
+        ipv4_address: 10.0.0.21
+      r3_r12:
+        ipv4_address: 10.0.0.17
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r3/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r4:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r4
+    image: frrouting/frr:latest
+    networks:
+      lan1:
+        ipv4_address: 192.168.10.1
+      r3_r4:
+        ipv4_address: 10.1.0.2
+      r4_r5:
+        ipv4_address: 10.1.0.5
+      r4_r6:
+        ipv4_address: 10.1.0.9
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r4/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r5:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r5
+    image: frrouting/frr:latest
+    networks:
+      r4_r5:
+        ipv4_address: 10.1.0.6
+      r5_r6:
+        ipv4_address: 10.1.0.13
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r5/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r6:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r6
+    image: frrouting/frr:latest
+    networks:
+      r4_r6:
+        ipv4_address: 10.1.0.10
+      r5_r6:
+        ipv4_address: 10.1.0.14
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r6/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r7:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r7
+    image: frrouting/frr:latest
+    networks:
+      r3_r7:
+        ipv4_address: 10.0.0.22
+      r7_r8:
+        ipv4_address: 10.2.0.1
+      r7_r11:
+        ipv4_address: 10.0.0.25
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r7/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r8:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r8
+    image: frrouting/frr:latest
+    networks:
+      lan2:
+        ipv4_address: 192.168.20.1
+      r7_r8:
+        ipv4_address: 10.2.0.2
+      r8_r9:
+        ipv4_address: 10.2.0.5
+      r8_r10:
+        ipv4_address: 10.2.0.9
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r8/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r9:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r9
+    image: frrouting/frr:latest
+    networks:
+      r8_r9:
+        ipv4_address: 10.2.0.6
+      r9_r10:
+        ipv4_address: 10.2.0.13
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r9/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r10:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r10
+    image: frrouting/frr:latest
+    networks:
+      r8_r10:
+        ipv4_address: 10.2.0.10
+      r9_r10:
+        ipv4_address: 10.2.0.14
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r10/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r11:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r11
+    image: frrouting/frr:latest
+    networks:
+      r2_r11:
+        ipv4_address: 10.0.0.14
+      r7_r11:
+        ipv4_address: 10.0.0.26
+      r11_r12:
+        ipv4_address: 10.0.0.29
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r11/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  r12:
+    command:
+      - /usr/lib/frr/docker-start
+    container_name: r12
+    image: frrouting/frr:latest
+    networks:
+      r1_r12:
+        ipv4_address: 10.0.0.6
+      r3_r12:
+        ipv4_address: 10.0.0.18
+      r11_r12:
+        ipv4_address: 10.0.0.30
+    privileged: true
+    volumes:
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/daemons
+        target: /etc/frr/daemons
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/frr/vtysh.conf
+        target: /etc/frr/vtysh.conf
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/bhavesh-shetty/NetRouteAI/enterprise-ospf-lab/r12/frr.conf
+        target: /etc/frr/frr.conf
+        bind:
+          create_host_path: true
+  sw1:
+    command:
+      - sleep
+      - infinity
+    container_name: sw1
+    image: alpine
+    networks:
+      lan1: null
+    privileged: true
+  sw2:
+    command:
+      - sleep
+      - infinity
+    container_name: sw2
+    image: alpine
+    networks:
+      lan2: null
+    privileged: true
+  sw3:
+    command:
+      - sleep
+      - infinity
+    container_name: sw3
+    image: alpine
+    networks:
+      management: null
+    privileged: true
+networks:
+  lan1:
+    name: enterprise-ospf-lab_lan1
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.10.0/24
+  lan2:
+    name: enterprise-ospf-lab_lan2
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.20.0/24
+  management:
+    name: enterprise-ospf-lab_management
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.30.0/24
+  r1_r2:
+    name: enterprise-ospf-lab_r1_r2
+    ipam:
+      config:
+        - subnet: 10.0.0.0/30
+          gateway: 10.0.0.254
+  r1_r12:
+    name: enterprise-ospf-lab_r1_r12
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.4/30
+  r2_r3:
+    name: enterprise-ospf-lab_r2_r3
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.8/30
+  r2_r11:
+    name: enterprise-ospf-lab_r2_r11
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.12/30
+  r3_r4:
+    name: enterprise-ospf-lab_r3_r4
+    ipam:
+      config:
+        - subnet: 10.1.0.0/30
+          gateway: 10.1.0.254
+  r3_r7:
+    name: enterprise-ospf-lab_r3_r7
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.20/30
+  r3_r12:
+    name: enterprise-ospf-lab_r3_r12
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.16/30
+  r4_r5:
+    name: enterprise-ospf-lab_r4_r5
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.1.0.4/30
+  r4_r6:
+    name: enterprise-ospf-lab_r4_r6
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.1.0.8/30
+  r5_r6:
+    name: enterprise-ospf-lab_r5_r6
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.1.0.12/30
+  r7_r8:
+    name: enterprise-ospf-lab_r7_r8
+    ipam:
+      config:
+        - subnet: 10.2.0.0/30
+          gateway: 10.2.0.254
+  r7_r11:
+    name: enterprise-ospf-lab_r7_r11
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.24/30
+  r8_r9:
+    name: enterprise-ospf-lab_r8_r9
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.2.0.4/30
+  r8_r10:
+    name: enterprise-ospf-lab_r8_r10
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.2.0.8/30
+  r9_r10:
+    name: enterprise-ospf-lab_r9_r10
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.2.0.12/30
+  r11_r12:
+    name: enterprise-ospf-lab_r11_r12
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.28/30
