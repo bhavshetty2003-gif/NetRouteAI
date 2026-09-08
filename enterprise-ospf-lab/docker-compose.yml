@@ -236,15 +236,31 @@ services:
     command: sleep infinity
     networks:
       lan1:
-        ipv4_address: 192.168.10.100
+       ipv4_address: 192.168.10.100
 
   pc2:
     image: alpine
     container_name: pc2
     command: sleep infinity
     networks:
+      lan1:
+        ipv4_address: 192.168.10.101
+
+  pc3:
+    image: alpine
+    container_name: pc3
+    command: sleep infinity
+    networks:
       lan2:
         ipv4_address: 192.168.20.100
+
+  pc4:
+    image: alpine
+    container_name: pc4
+    command: sleep infinity
+    networks:
+      lan2:
+        ipv4_address: 192.168.20.101
 
 networks:
   r1_r2:

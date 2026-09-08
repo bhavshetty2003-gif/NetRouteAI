@@ -1,0 +1,3 @@
+networks: {}
+services: {}
+version: '3.8'
