@@ -1,98 +1,111 @@
-import {
-  Link2,
-  Trash2,
-  Save,
-  FolderOpen,
-} from "lucide-react";
+import { Save, FolderOpen, Trash2, Link2 } from "lucide-react";
+import type { CableType } from "./types";
 
 type ToolbarProps = {
+  cableType: CableType;
+  onCableChange: (type: CableType) => void;
+
   connectMode: boolean;
-  cableType: "Straight" | "Cross" | "Fiber";
 
   onConnect: () => void;
   onDelete: () => void;
   onSave: () => void;
   onLoad: () => void;
-
-  onCableChange: (
-    cable: "Straight" | "Cross" | "Fiber"
-  ) => void;
 };
 
 function Toolbar({
-  connectMode,
   cableType,
+  onCableChange,
+  connectMode,
   onConnect,
   onDelete,
   onSave,
   onLoad,
-  onCableChange,
 }: ToolbarProps) {
   return (
-    <div className="mb-6 flex justify-between items-center">
-      <div>
-        <h1 className="text-3xl font-bold text-white">
-          Network Designer
-        </h1>
+    <div className="flex items-center gap-3 p-4 bg-slate-800 border-b border-slate-700">
 
-        <p className="text-gray-400 mt-2">
-          Build, configure and simulate your own network topology.
-        </p>
-      </div>
+      {/* Cable Type */}
 
-      <div className="flex gap-3 items-center">
+      <select
+        value={cableType}
+        onChange={(e) =>
+          onCableChange(e.target.value as CableType)
+        }
+        className="bg-slate-900 text-white px-3 py-2 rounded-lg border border-slate-700"
+      >
+        <option value="Auto">Auto</option>
+        <option value="Copper Straight Through">
+          Copper Straight Through
+        </option>
+        <option value="Copper Cross Over">
+          Copper Cross Over
+        </option>
+        <option value="Fiber">
+          Fiber
+        </option>
+        <option value="Console">
+          Console
+        </option>
+        <option value="Serial DCE">
+          Serial DCE
+        </option>
+        <option value="Serial DTE">
+          Serial DTE
+        </option>
+        <option value="Coaxial">
+          Coaxial
+        </option>
+        <option value="Phone">
+          Phone
+        </option>
+      </select>
 
-        <select
-          value={cableType}
-          onChange={(e) =>
-            onCableChange(
-              e.target.value as
-                | "Straight"
-                | "Cross"
-                | "Fiber"
-            )
-          }
-          className="bg-slate-800 text-white rounded-xl px-4 py-3"
-        >
-          <option>Straight</option>
-          <option>Cross</option>
-          <option>Fiber</option>
-        </select>
+      {/* Connect */}
 
-        <button
-          onClick={onConnect}
-          className={`flex items-center gap-2 px-5 py-3 rounded-xl ${
-            connectMode
-              ? "bg-cyan-500 text-white"
-              : "bg-slate-800 text-gray-300"
-          }`}
-        >
-          <Link2 size={18} />
-          Connect
-        </button>
+      <button
+        onClick={onConnect}
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg transition ${
+          connectMode
+            ? "bg-cyan-600 text-white"
+            : "bg-slate-700 text-gray-200 hover:bg-slate-600"
+        }`}
+      >
+        <Link2 size={18} />
+        Connect
+      </button>
 
-        <button
-          onClick={onDelete}
-          className="bg-red-600 px-5 py-3 rounded-xl text-white"
-        >
-          <Trash2 size={18} />
-        </button>
+      {/* Delete */}
 
-        <button
-          onClick={onSave}
-          className="bg-green-600 px-5 py-3 rounded-xl text-white"
-        >
-          <Save size={18} />
-        </button>
+      <button
+        onClick={onDelete}
+        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition"
+      >
+        <Trash2 size={18} />
+        Delete
+      </button>
 
-        <button
-          onClick={onLoad}
-          className="bg-blue-600 px-5 py-3 rounded-xl text-white"
-        >
-          <FolderOpen size={18} />
-        </button>
+      <div className="flex-1" />
 
-      </div>
+      {/* Save */}
+
+      <button
+        onClick={onSave}
+        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 transition"
+      >
+        <Save size={18} />
+        Save
+      </button>
+
+      {/* Load */}
+
+      <button
+        onClick={onLoad}
+        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
+      >
+        <FolderOpen size={18} />
+        Load
+      </button>
     </div>
   );
 }

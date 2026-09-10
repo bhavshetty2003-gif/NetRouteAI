@@ -1,50 +1,47 @@
 import {
   ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
+  BarChart,
+  Bar,
+  CartesianGrid,
+  XAxis,
+  YAxis,
   Tooltip,
 } from "recharts";
 
-import { trafficData } from "../../data/analyticsData";
+import { cpuData } from "../../data/analyticsData";
 
-const COLORS = [
-  "#06b6d4",
-  "#22c55e",
-  "#8b5cf6",
-  "#f59e0b",
-];
-
-function TrafficChart() {
+function CpuChart() {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 h-[350px]">
 
       <h2 className="text-xl font-semibold text-white mb-6">
-        Traffic Distribution
+        Bandwidth Utilization
       </h2>
 
       <ResponsiveContainer width="100%" height="85%">
-        <PieChart>
-          <Pie
-            data={trafficData}
-            dataKey="value"
-            outerRadius={100}
-            label
-          >
-            {trafficData.map((_, index) => (
-              <Cell
-                key={index}
-                fill={COLORS[index % COLORS.length]}
-              />
-            ))}
-          </Pie>
+        <BarChart data={cpuData}>
+          <CartesianGrid stroke="#334155" />
+
+          <XAxis
+            dataKey="router"
+            stroke="#94a3b8"
+          />
+
+          <YAxis stroke="#94a3b8" />
 
           <Tooltip />
-        </PieChart>
+
+          <Bar
+            dataKey="cpu"
+            name="Bandwidth (%)"
+            fill="#22c55e"
+            radius={[8, 8, 0, 0]}
+          />
+        </BarChart>
       </ResponsiveContainer>
 
     </div>
   );
 }
 
-export default TrafficChart;
+export default CpuChart;

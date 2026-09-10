@@ -8,33 +8,30 @@ import {
   Tooltip,
 } from "recharts";
 
-import { cpuData } from "../../data/analyticsData";
+const hopData = [
+  { router: "R1", hops: 2 },
+  { router: "R2", hops: 3 },
+  { router: "R3", hops: 1 },
+  { router: "R4", hops: 4 },
+];
 
-function CpuChart() {
+function HopCountChart() {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 h-[350px]">
 
       <h2 className="text-xl font-semibold text-white mb-6">
-        Bandwidth Utilization
+        Hop Count Comparison
       </h2>
 
       <ResponsiveContainer width="100%" height="85%">
-        <BarChart data={cpuData}>
+        <BarChart data={hopData}>
           <CartesianGrid stroke="#334155" />
-
-          <XAxis
-            dataKey="router"
-            stroke="#94a3b8"
-          />
-
+          <XAxis dataKey="router" stroke="#94a3b8" />
           <YAxis stroke="#94a3b8" />
-
           <Tooltip />
-
           <Bar
-            dataKey="cpu"
-            name="Bandwidth (%)"
-            fill="#22c55e"
+            dataKey="hops"
+            fill="#8b5cf6"
             radius={[8, 8, 0, 0]}
           />
         </BarChart>
@@ -44,4 +41,4 @@ function CpuChart() {
   );
 }
 
-export default CpuChart;
+export default HopCountChart;

@@ -1,49 +1,47 @@
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
+  BarChart,
+  Bar,
   CartesianGrid,
   XAxis,
   YAxis,
   Tooltip,
 } from "recharts";
 
-import { latencyData } from "../../data/analyticsData";
+import { cpuData } from "../../data/analyticsData";
 
-function LatencyChart() {
+function CpuChart() {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 h-[350px]">
 
       <h2 className="text-xl font-semibold text-white mb-6">
-        Network Latency
+        Bandwidth Utilization
       </h2>
 
       <ResponsiveContainer width="100%" height="85%">
-        <LineChart data={latencyData}>
+        <BarChart data={cpuData}>
           <CartesianGrid stroke="#334155" />
 
           <XAxis
-            dataKey="time"
+            dataKey="router"
             stroke="#94a3b8"
           />
 
-          <YAxis
-            stroke="#94a3b8"
-          />
+          <YAxis stroke="#94a3b8" />
 
           <Tooltip />
 
-          <Line
-            type="monotone"
-            dataKey="latency"
-            stroke="#06b6d4"
-            strokeWidth={3}
+          <Bar
+            dataKey="cpu"
+            name="Bandwidth (%)"
+            fill="#22c55e"
+            radius={[8, 8, 0, 0]}
           />
-        </LineChart>
+        </BarChart>
       </ResponsiveContainer>
 
     </div>
   );
 }
 
-export default LatencyChart;
+export default CpuChart;
