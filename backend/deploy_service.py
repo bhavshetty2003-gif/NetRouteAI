@@ -34,3 +34,9 @@ def deploy_topology(topology):
     return {
         "status": "Deployment successful"
     }
+    verification = verify_topology(topology)
+
+    return {
+        "status": "Deployment successful",
+        "verification": verification
+    }

@@ -1,0 +1,6 @@
+{
+  "name": "NetRouteAI - Network Topology Designer & Packet Simulator",
+  "description": "NetRouteAI combines traditional networking with Artificial Intelligence by allowing users to create enterprise network topologies, automate deployment using Docker and FRRouting, compare OSPF routing with AI-based routing algorithms, analyze network metrics, and recommend the optimal path based on performance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

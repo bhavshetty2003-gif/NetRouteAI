@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from deploy_service import deploy_topology
 from docker_service import get_routers, get_links
 from models import Topology
+from verify_service import verify_topology
 
 app = FastAPI()
 
@@ -37,6 +38,10 @@ def create_topology(topology: Topology):
 @app.get("/topology")
 def get_topology():
     return CURRENT_TOPOLOGY
+
+@app.get("/verify")
+def verify():
+    return verify_topology()
 
 @app.post("/validate")
 def validate(topology: Topology):
