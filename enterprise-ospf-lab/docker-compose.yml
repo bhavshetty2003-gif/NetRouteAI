@@ -230,10 +230,16 @@ services:
       management:
         ipv4_address: 192.168.30.2
 
+  # The PC/switch containers need NET_ADMIN to install a default route, and the
+  # gateway must point at the router actually on the LAN (r4 = 192.168.10.2,
+  # r8 = 192.168.20.2). Without both, a PC can only reach its own subnet, which
+  # makes host-to-router latency measurement impossible.
   pc1:
     image: alpine
     container_name: pc1
-    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    command: sh -c "ip route replace default via 192.168.10.2 dev eth0; sleep infinity"
     networks:
       lan1:
        ipv4_address: 192.168.10.100
@@ -241,7 +247,9 @@ services:
   pc2:
     image: alpine
     container_name: pc2
-    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    command: sh -c "ip route replace default via 192.168.10.2 dev eth0; sleep infinity"
     networks:
       lan1:
         ipv4_address: 192.168.10.101
@@ -249,7 +257,9 @@ services:
   pc3:
     image: alpine
     container_name: pc3
-    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    command: sh -c "ip route replace default via 192.168.20.2 dev eth0; sleep infinity"
     networks:
       lan2:
         ipv4_address: 192.168.20.100
@@ -257,7 +267,9 @@ services:
   pc4:
     image: alpine
     container_name: pc4
-    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    command: sh -c "ip route replace default via 192.168.20.2 dev eth0; sleep infinity"
     networks:
       lan2:
         ipv4_address: 192.168.20.101

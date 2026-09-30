@@ -158,18 +158,18 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
     <div
       id="floating-drawing-palette"
       style={{ left: `${position.x}px`, top: `${position.y}px` }}
-      className="fixed z-40 w-72 bg-slate-900/90 backdrop-blur-xl border border-cyan-500/40 rounded-2xl shadow-2xl shadow-cyan-950/60 overflow-hidden font-sans transition-shadow select-none"
+      className="fixed z-40 w-72 bg-panel/90 backdrop-blur-xl border border-accent/40 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden font-sans transition-shadow select-none"
     >
       {/* Draggable Header */}
       <div
         onMouseDown={handleHeaderMouseDown}
-        className="px-3.5 py-2.5 bg-gradient-to-r from-slate-950 via-slate-900 to-cyan-950/80 border-b border-cyan-500/20 flex items-center justify-between cursor-move"
+        className="px-3.5 py-2.5 bg-gradient-to-r from-sunken via-panel to-accent-soft/80 border-b border-accent/20 flex items-center justify-between cursor-move"
       >
         <div className="flex items-center space-x-2">
-          <GripHorizontal className="w-4 h-4 text-cyan-400 opacity-80" />
-          <Palette className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="text-xs font-bold text-white tracking-wide">Drawing Palette</span>
-          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-700/60 text-cyan-300 font-semibold">
+          <GripHorizontal className="w-4 h-4 text-accent opacity-80" />
+          <Palette className="w-3.5 h-3.5 text-accent" />
+          <span className="text-xs font-bold text-accent-ink tracking-wide">Drawing Palette</span>
+          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-accent-soft border border-accent/60 text-accent font-semibold">
             Vector
           </span>
         </div>
@@ -177,14 +177,14 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
         <div className="flex items-center space-x-1">
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            className="p-1 rounded text-ink-muted hover:text-ink hover:bg-raised transition-colors"
             title={isCollapsed ? 'Expand Toolbox' : 'Collapse Toolbox'}
           >
             {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
           </button>
           <button
             onClick={onClose}
-            className="p-1 rounded text-slate-400 hover:text-rose-300 hover:bg-rose-950/50 transition-colors"
+            className="p-1 rounded text-ink-muted hover:text-bad hover:bg-bad-soft/50 transition-colors"
             title="Close Drawing Palette"
           >
             <X className="w-3.5 h-3.5" />
@@ -195,14 +195,14 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
       {!isCollapsed && (
         <div className="p-3 space-y-3 max-h-[80vh] overflow-y-auto">
           {/* Top Quick Actions Bar (Duplicate, Lock, Group, Delete) */}
-          <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs">
+          <div className="flex items-center justify-between pb-2 border-b border-line text-xs">
             <div className="flex items-center space-x-1">
               <button
                 onClick={() => onSelectTool('select')}
                 className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
                   activeTool === 'select'
-                    ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-sm font-bold'
-                    : 'bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    ? 'bg-accent text-accent-ink border-accent shadow-sm font-bold'
+                    : 'bg-panel/80 text-ink-soft border-line hover:bg-overlay'
                 }`}
                 title="Select & Transform Tool"
               >
@@ -212,7 +212,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
               <button
                 onClick={onDuplicateSelected}
                 disabled={!selectedAnnotation}
-                className="p-1.5 rounded-lg border border-slate-700 bg-slate-800/80 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                className="p-1.5 rounded-lg border border-line bg-panel/80 text-ink-soft hover:bg-overlay disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
                 title="Duplicate Selected Object (Ctrl+D)"
               >
                 <Copy className="w-3.5 h-3.5" />
@@ -221,20 +221,20 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
               <button
                 onClick={onToggleLock}
                 disabled={!selectedAnnotation}
-                className="p-1.5 rounded-lg border border-slate-700 bg-slate-800/80 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                className="p-1.5 rounded-lg border border-line bg-panel/80 text-ink-soft hover:bg-overlay disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
                 title={isLocked ? 'Unlock Position' : 'Lock Position'}
               >
                 {isLocked ? (
-                  <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                  <Unlock className="w-3.5 h-3.5 text-warn" />
                 ) : (
-                  <Lock className="w-3.5 h-3.5 text-slate-300" />
+                  <Lock className="w-3.5 h-3.5 text-ink-soft" />
                 )}
               </button>
 
               {(canGroup || isGrouped) && (
                 <button
                   onClick={onToggleGroup}
-                  className="p-1.5 rounded-lg border border-cyan-800 bg-cyan-950/60 text-cyan-300 hover:bg-cyan-900/80 transition-all cursor-pointer"
+                  className="p-1.5 rounded-lg border border-accent bg-accent-soft/60 text-accent hover:bg-accent-soft/80 transition-all cursor-pointer"
                   title={isGrouped ? 'Ungroup Objects' : 'Group Selected Objects'}
                 >
                   {isGrouped ? <FolderMinus className="w-3.5 h-3.5" /> : <FolderPlus className="w-3.5 h-3.5" />}
@@ -245,7 +245,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
             <button
               onClick={onDeleteSelected}
               disabled={!selectedAnnotation && selectedAnnotationsCount === 0}
-              className="p-1.5 rounded-lg border border-rose-900/60 bg-rose-950/40 text-rose-300 hover:bg-rose-900/60 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+              className="p-1.5 rounded-lg border border-bad/60 bg-bad-soft/40 text-bad hover:bg-bad-soft/60 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
               title="Delete Selected Annotation"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -253,13 +253,13 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
           </div>
 
           {/* Tab Navigation: Tools | Style | Text */}
-          <div className="flex bg-slate-950/60 rounded-xl p-1 border border-slate-800 text-[11px] font-medium">
+          <div className="flex bg-panel/60 rounded-xl p-1 border border-line text-[11px] font-medium">
             <button
               onClick={() => setActiveTab('tools')}
               className={`flex-1 py-1 rounded-lg transition-colors cursor-pointer text-center ${
                 activeTab === 'tools'
-                  ? 'bg-cyan-950 text-cyan-300 font-bold border border-cyan-500/40'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-accent-soft text-accent font-bold border border-accent/40'
+                  : 'text-ink-muted hover:text-ink'
               }`}
             >
               Shapes
@@ -268,8 +268,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
               onClick={() => setActiveTab('style')}
               className={`flex-1 py-1 rounded-lg transition-colors cursor-pointer text-center ${
                 activeTab === 'style'
-                  ? 'bg-cyan-950 text-cyan-300 font-bold border border-cyan-500/40'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-accent-soft text-accent font-bold border border-accent/40'
+                  : 'text-ink-muted hover:text-ink'
               }`}
             >
               Colors & Border
@@ -278,8 +278,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
               onClick={() => setActiveTab('text')}
               className={`flex-1 py-1 rounded-lg transition-colors cursor-pointer text-center ${
                 activeTab === 'text'
-                  ? 'bg-cyan-950 text-cyan-300 font-bold border border-cyan-500/40'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-accent-soft text-accent font-bold border border-accent/40'
+                  : 'text-ink-muted hover:text-ink'
               }`}
             >
               Text
@@ -289,7 +289,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
           {/* TAB 1: DRAWING TOOLS */}
           {activeTab === 'tools' && (
             <div className="space-y-2">
-              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-semibold">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-ink-muted font-semibold">
                 Drawing Tools
               </div>
               <div className="grid grid-cols-4 gap-1.5">
@@ -298,12 +298,12 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('rect')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'rect'
-                      ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-950'
-                      : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
                   }`}
                   title="Rectangle Shape"
                 >
-                  <Square className="w-4 h-4 mb-1 text-cyan-400" />
+                  <Square className="w-4 h-4 mb-1 text-accent" />
                   <span className="text-[10px]">Rect</span>
                 </button>
 
@@ -312,12 +312,12 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('rounded-rect')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'rounded-rect'
-                      ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-950'
-                      : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
                   }`}
                   title="Rounded Rectangle"
                 >
-                  <Square className="w-4 h-4 mb-1 text-cyan-400 rounded-md" />
+                  <Square className="w-4 h-4 mb-1 text-accent rounded-md" />
                   <span className="text-[10px]">Round</span>
                 </button>
 
@@ -326,12 +326,12 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('circle')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'circle'
-                      ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-950'
-                      : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
                   }`}
                   title="Circle Shape"
                 >
-                  <Circle className="w-4 h-4 mb-1 text-cyan-400" />
+                  <Circle className="w-4 h-4 mb-1 text-accent" />
                   <span className="text-[10px]">Circle</span>
                 </button>
 
@@ -340,12 +340,12 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('ellipse')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'ellipse'
-                      ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-950'
-                      : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
                   }`}
                   title="Ellipse Zone"
                 >
-                  <div className="w-4 h-2.5 rounded-full border-2 border-cyan-400 mb-1.5" />
+                  <div className="w-4 h-2.5 rounded-full border-2 border-accent mb-1.5" />
                   <span className="text-[10px]">Ellipse</span>
                 </button>
 
@@ -354,12 +354,12 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('line')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'line'
-                      ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-950'
-                      : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
                   }`}
                   title="Straight Line"
                 >
-                  <Minus className="w-4 h-4 mb-1 text-cyan-400" />
+                  <Minus className="w-4 h-4 mb-1 text-accent" />
                   <span className="text-[10px]">Line</span>
                 </button>
 
@@ -368,12 +368,12 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('arrow')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'arrow'
-                      ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-950'
-                      : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
                   }`}
                   title="Flow Arrow"
                 >
-                  <ArrowRight className="w-4 h-4 mb-1 text-cyan-400" />
+                  <ArrowRight className="w-4 h-4 mb-1 text-accent" />
                   <span className="text-[10px]">Arrow</span>
                 </button>
 
@@ -382,21 +382,21 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('text')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer col-span-2 ${
                     activeTool === 'text'
-                      ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-950'
-                      : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
                   }`}
                   title="Text Label (Click on canvas to type immediately)"
                 >
                   <div className="flex items-center space-x-1 mb-1">
-                    <Type className="w-4 h-4 text-cyan-400" />
+                    <Type className="w-4 h-4 text-accent" />
                     <span className="text-[10px] font-bold">Text Label</span>
                   </div>
-                  <span className="text-[9px] text-slate-400">Click canvas to write</span>
+                  <span className="text-[9px] text-ink-muted">Click canvas to write</span>
                 </button>
               </div>
 
               {/* Status helper text */}
-              <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800 text-[10px] text-slate-400 leading-relaxed font-mono">
+              <div className="p-2 rounded-xl bg-panel/60 border border-line text-[10px] text-ink-muted leading-relaxed font-mono">
                 {activeTool === 'select' && 'Click shape to select, drag to reposition, use corner handles to resize.'}
                 {activeTool === 'text' && 'Click anywhere on canvas to immediately place a blinking text label.'}
                 {activeTool !== 'select' && activeTool !== 'text' && 'Click and drag on canvas to draw shape.'}
@@ -409,14 +409,14 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
             <div className="space-y-3">
               {/* Fill Color */}
               <div>
-                <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+                <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-ink-muted mb-1.5">
                   <span>Fill Color</span>
                   <div className="flex items-center space-x-1.5">
                     <span
-                      className="w-3.5 h-3.5 rounded border border-slate-600 inline-block"
+                      className="w-3.5 h-3.5 rounded border border-line-strong inline-block"
                       style={{ backgroundColor: activeFill === 'transparent' ? 'transparent' : activeFill }}
                     />
-                    <span className="text-slate-300 lowercase font-mono text-[9px]">{activeFill}</span>
+                    <span className="text-ink-soft lowercase font-mono text-[9px]">{activeFill}</span>
                   </div>
                 </div>
 
@@ -427,11 +427,11 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                       onClick={() => handleColorChange('fill', col)}
                       style={{ backgroundColor: col === 'transparent' ? '#1E293B' : col }}
                       className={`h-6 rounded-lg border transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
-                        activeFill === col ? 'ring-2 ring-cyan-400 border-white' : 'border-slate-700'
+                        activeFill === col ? 'ring-2 ring-accent border-line-strong' : 'border-line'
                       }`}
                       title={col}
                     >
-                      {col === 'transparent' && <span className="text-[8px] text-slate-400">none</span>}
+                      {col === 'transparent' && <span className="text-[8px] text-ink-muted">none</span>}
                     </button>
                   ))}
                 </div>
@@ -442,22 +442,22 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                     type="color"
                     value={activeFill === 'transparent' ? '#06B6D4' : activeFill}
                     onChange={(e) => handleColorChange('fill', e.target.value)}
-                    className="w-7 h-7 rounded border border-slate-700 bg-transparent cursor-pointer"
+                    className="w-7 h-7 rounded border border-line bg-transparent cursor-pointer"
                   />
-                  <span className="text-[10px] text-slate-400">Custom Fill Color</span>
+                  <span className="text-[10px] text-ink-muted">Custom Fill Color</span>
                 </div>
               </div>
 
               {/* Border Color */}
-              <div className="pt-2 border-t border-slate-800">
-                <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+              <div className="pt-2 border-t border-line">
+                <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-ink-muted mb-1.5">
                   <span>Border Color</span>
                   <div className="flex items-center space-x-1.5">
                     <span
-                      className="w-3.5 h-3.5 rounded border border-slate-600 inline-block"
+                      className="w-3.5 h-3.5 rounded border border-line-strong inline-block"
                       style={{ backgroundColor: activeBorder === 'transparent' ? 'transparent' : activeBorder }}
                     />
-                    <span className="text-slate-300 lowercase font-mono text-[9px]">{activeBorder}</span>
+                    <span className="text-ink-soft lowercase font-mono text-[9px]">{activeBorder}</span>
                   </div>
                 </div>
 
@@ -468,11 +468,11 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                       onClick={() => handleColorChange('border', col)}
                       style={{ backgroundColor: col === 'transparent' ? '#1E293B' : col }}
                       className={`h-6 rounded-lg border transition-transform hover:scale-110 cursor-pointer flex items-center justify-center ${
-                        activeBorder === col ? 'ring-2 ring-cyan-400 border-white' : 'border-slate-700'
+                        activeBorder === col ? 'ring-2 ring-accent border-line-strong' : 'border-line'
                       }`}
                       title={col}
                     >
-                      {col === 'transparent' && <span className="text-[8px] text-slate-400">none</span>}
+                      {col === 'transparent' && <span className="text-[8px] text-ink-muted">none</span>}
                     </button>
                   ))}
                 </div>
@@ -482,17 +482,17 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                     type="color"
                     value={activeBorder === 'transparent' ? '#0284C7' : activeBorder}
                     onChange={(e) => handleColorChange('border', e.target.value)}
-                    className="w-7 h-7 rounded border border-slate-700 bg-transparent cursor-pointer"
+                    className="w-7 h-7 rounded border border-line bg-transparent cursor-pointer"
                   />
-                  <span className="text-[10px] text-slate-400">Custom Border Color</span>
+                  <span className="text-[10px] text-ink-muted">Custom Border Color</span>
                 </div>
               </div>
 
               {/* Border Thickness */}
-              <div className="pt-2 border-t border-slate-800">
-                <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">
+              <div className="pt-2 border-t border-line">
+                <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-ink-muted mb-1">
                   <span>Border Thickness</span>
-                  <span className="text-cyan-300 font-bold">{activeBorderWidth}px</span>
+                  <span className="text-accent font-bold">{activeBorderWidth}px</span>
                 </div>
                 <div className="flex items-center space-x-1">
                   {[1, 2, 3, 4, 6, 8].map((w) => (
@@ -504,8 +504,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                       }}
                       className={`flex-1 py-1 rounded border text-[10px] font-mono transition-colors cursor-pointer ${
                         activeBorderWidth === w
-                          ? 'bg-cyan-950 text-cyan-300 border-cyan-400 font-bold'
-                          : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
+                          ? 'bg-accent-soft text-accent border-accent font-bold'
+                          : 'bg-panel text-ink-muted border-line hover:bg-overlay'
                       }`}
                     >
                       {w}px
@@ -515,10 +515,10 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
               </div>
 
               {/* Opacity */}
-              <div className="pt-2 border-t border-slate-800">
-                <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">
+              <div className="pt-2 border-t border-line">
+                <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-ink-muted mb-1">
                   <span>Opacity</span>
-                  <span className="text-cyan-300 font-bold">{Math.round(activeOpacity * 100)}%</span>
+                  <span className="text-accent font-bold">{Math.round(activeOpacity * 100)}%</span>
                 </div>
                 <input
                   type="range"
@@ -531,9 +531,9 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                     onChangeOpacity(op);
                     if (selectedAnnotation) onUpdateSelectedAnnotation({ opacity: op });
                   }}
-                  className="w-full accent-cyan-400 cursor-pointer"
+                  className="w-full accent-accent cursor-pointer"
                 />
-                <div className="flex justify-between text-[9px] text-slate-500 font-mono mt-0.5">
+                <div className="flex justify-between text-[9px] text-accent-ink font-mono mt-0.5">
                   <span>5%</span>
                   <span>25%</span>
                   <span>50%</span>
@@ -544,8 +544,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
 
               {/* Recently Used Colors */}
               {recentColors.length > 0 && (
-                <div className="pt-2 border-t border-slate-800">
-                  <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+                <div className="pt-2 border-t border-line">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-ink-muted mb-1.5">
                     Recently Used Colors
                   </div>
                   <div className="flex flex-wrap gap-1">
@@ -554,7 +554,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                         key={`recent-${col}-${idx}`}
                         onClick={() => handleColorChange('fill', col)}
                         style={{ backgroundColor: col }}
-                        className="w-5 h-5 rounded-md border border-slate-700 hover:scale-110 transition-transform cursor-pointer"
+                        className="w-5 h-5 rounded-md border border-line hover:scale-110 transition-transform cursor-pointer"
                         title={col}
                       />
                     ))}
@@ -567,14 +567,14 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
           {/* TAB 3: TEXT PROPERTIES */}
           {activeTab === 'text' && (
             <div className="space-y-3">
-              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-ink-muted">
                 Text Formatting
               </div>
 
               {/* Font Family */}
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Font Family</label>
-                <div className="flex bg-slate-950 rounded-lg p-1 border border-slate-800">
+                <label className="text-[10px] text-ink-muted block mb-1">Font Family</label>
+                <div className="flex bg-panel rounded-lg p-1 border border-line">
                   {(['sans', 'mono', 'serif'] as const).map((fam) => (
                     <button
                       key={fam}
@@ -583,8 +583,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                       }}
                       className={`flex-1 py-1 rounded text-[10px] capitalize transition-colors cursor-pointer ${
                         selectedAnnotation?.fontFamily === fam
-                          ? 'bg-cyan-950 text-cyan-300 font-bold'
-                          : 'text-slate-400 hover:text-slate-200'
+                          ? 'bg-accent-soft text-accent font-bold'
+                          : 'text-ink-muted hover:text-ink'
                       }`}
                     >
                       {fam}
@@ -595,9 +595,9 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
 
               {/* Font Size */}
               <div>
-                <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                <div className="flex justify-between text-[10px] text-ink-muted mb-1">
                   <span>Font Size</span>
-                  <span className="text-cyan-300 font-mono font-bold">
+                  <span className="text-accent font-mono font-bold">
                     {selectedAnnotation?.fontSize || 14}px
                   </span>
                 </div>
@@ -610,8 +610,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                       }}
                       className={`flex-1 py-1 rounded border text-[10px] font-mono transition-colors cursor-pointer ${
                         (selectedAnnotation?.fontSize || 14) === sz
-                          ? 'bg-cyan-950 text-cyan-300 border-cyan-400 font-bold'
-                          : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
+                          ? 'bg-accent-soft text-accent border-accent font-bold'
+                          : 'bg-panel text-ink-muted border-line hover:bg-overlay'
                       }`}
                     >
                       {sz}
@@ -622,7 +622,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
 
               {/* Style Toggles: Bold, Italic, Underline */}
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Text Style</label>
+                <label className="text-[10px] text-ink-muted block mb-1">Text Style</label>
                 <div className="flex items-center space-x-1.5">
                   <button
                     onClick={() => {
@@ -634,8 +634,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                     }}
                     className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
                       selectedAnnotation?.fontWeight === 'bold'
-                        ? 'bg-cyan-950 text-cyan-300 border-cyan-400'
-                        : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
+                        ? 'bg-accent-soft text-accent border-accent'
+                        : 'bg-panel text-ink-muted border-line hover:bg-overlay'
                     }`}
                     title="Bold"
                   >
@@ -652,8 +652,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                     }}
                     className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
                       selectedAnnotation?.fontStyle === 'italic'
-                        ? 'bg-cyan-950 text-cyan-300 border-cyan-400'
-                        : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
+                        ? 'bg-accent-soft text-accent border-accent'
+                        : 'bg-panel text-ink-muted border-line hover:bg-overlay'
                     }`}
                     title="Italic"
                   >
@@ -671,15 +671,15 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                     }}
                     className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
                       selectedAnnotation?.textDecoration === 'underline'
-                        ? 'bg-cyan-950 text-cyan-300 border-cyan-400'
-                        : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
+                        ? 'bg-accent-soft text-accent border-accent'
+                        : 'bg-panel text-ink-muted border-line hover:bg-overlay'
                     }`}
                     title="Underline"
                   >
                     <Underline className="w-3.5 h-3.5" />
                   </button>
 
-                  <div className="h-4 w-px bg-slate-800 mx-1" />
+                  <div className="h-4 w-px bg-panel mx-1" />
 
                   {/* Alignment */}
                   {(['left', 'center', 'right'] as const).map((align) => (
@@ -690,8 +690,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                       }}
                       className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
                         (selectedAnnotation?.textAlign || 'left') === align
-                          ? 'bg-cyan-950 text-cyan-300 border-cyan-400'
-                          : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
+                          ? 'bg-accent-soft text-accent border-accent'
+                          : 'bg-panel text-ink-muted border-line hover:bg-overlay'
                       }`}
                       title={`Align ${align}`}
                     >
@@ -709,7 +709,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
 
               {/* Text Color */}
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Text Color</label>
+                <label className="text-[10px] text-ink-muted block mb-1">Text Color</label>
                 <div className="flex items-center space-x-2">
                   <input
                     type="color"
@@ -717,9 +717,9 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                     onChange={(e) => {
                       if (selectedAnnotation) onUpdateSelectedAnnotation({ textColor: e.target.value });
                     }}
-                    className="w-7 h-7 rounded border border-slate-700 bg-transparent cursor-pointer"
+                    className="w-7 h-7 rounded border border-line bg-transparent cursor-pointer"
                   />
-                  <span className="text-[10px] font-mono text-slate-300">
+                  <span className="text-[10px] font-mono text-ink-soft">
                     {selectedAnnotation?.textColor || '#FFFFFF'}
                   </span>
                 </div>
@@ -727,7 +727,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
 
               {/* Text Background (Badge / Label style) */}
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Background Badge Color</label>
+                <label className="text-[10px] text-ink-muted block mb-1">Background Badge Color</label>
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => {
@@ -735,8 +735,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                     }}
                     className={`px-2 py-1 rounded text-[10px] border transition-colors cursor-pointer ${
                       !selectedAnnotation?.backgroundColor || selectedAnnotation.backgroundColor === 'transparent'
-                        ? 'bg-cyan-950 text-cyan-300 border-cyan-400'
-                        : 'bg-slate-800 text-slate-400 border-slate-700'
+                        ? 'bg-accent-soft text-accent border-accent'
+                        : 'bg-panel text-ink-muted border-line'
                     }`}
                   >
                     Transparent
@@ -752,14 +752,14 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                     onChange={(e) => {
                       if (selectedAnnotation) onUpdateSelectedAnnotation({ backgroundColor: e.target.value });
                     }}
-                    className="w-7 h-7 rounded border border-slate-700 bg-transparent cursor-pointer"
+                    className="w-7 h-7 rounded border border-line bg-transparent cursor-pointer"
                   />
                 </div>
               </div>
 
               {/* Quick Preset Labels from user request */}
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Quick Network Labels</label>
+                <label className="text-[10px] text-ink-muted block mb-1">Quick Network Labels</label>
                 <div className="flex flex-wrap gap-1">
                   {[
                     'Core Network',
@@ -780,7 +780,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                           onUpdateSelectedAnnotation({ text: presetText });
                         }
                       }}
-                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-cyan-950 hover:text-cyan-300 hover:border-cyan-600/60 border border-slate-700/80 text-[10px] font-mono text-slate-300 transition-colors cursor-pointer"
+                      className="px-2 py-0.5 rounded bg-panel hover:bg-accent-soft hover:text-accent hover:border-accent/60 border border-line/80 text-[10px] font-mono text-ink-soft transition-colors cursor-pointer"
                     >
                       {presetText}
                     </button>

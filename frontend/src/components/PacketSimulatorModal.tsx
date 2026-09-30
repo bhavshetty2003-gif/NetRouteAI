@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NetworkDevice, NetworkCable, PacketSimulationState, PacketHop } from '../types/network';
+import { NetworkDevice, NetworkCable, PacketSimulationState, PacketHop, PacketGeneratorConfig } from '../types/network';
 import { discoverRoute } from '../utils/networkRouting';
 import {
   Send,
@@ -12,6 +12,8 @@ import {
   Layers,
   Activity,
   Zap,
+  Settings,
+  Pause,
 } from 'lucide-react';
 import { DeviceIcon } from './DeviceIcons';
 
@@ -22,6 +24,9 @@ interface PacketSimulatorModalProps {
   cables: NetworkCable[];
   simulationState: PacketSimulationState;
   onStartSimulation: (sourceId: string, targetId: string, speedMs?: number) => void;
+  onStartPacketGenerator: (config: PacketGeneratorConfig) => void;
+  onStopPacketGenerator: () => void;
+  packetGeneratorConfig: PacketGeneratorConfig;
 }
 
 export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
@@ -31,12 +36,17 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
   cables,
   simulationState,
   onStartSimulation,
+  onStartPacketGenerator,
+  onStopPacketGenerator,
+  packetGeneratorConfig,
 }) => {
   const [sourceId, setSourceId] = useState<string>(devices[0]?.id || '');
   const [targetId, setTargetId] = useState<string>(
     devices.length > 1 ? devices[devices.length - 1]?.id : devices[0]?.id || ''
   );
   const [speed, setSpeed] = useState<number>(400); // 400ms pause between hops
+  const [genCount, setGenCount] = useState<number>(100);
+  const [genInterval, setGenInterval] = useState<number>(100);
 
   if (!isOpen) return null;
 
@@ -54,29 +64,29 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
   return (
     <div
       id="packet-simulator-modal-overlay"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-base/70 backdrop-blur-xs p-4 select-none"
     >
       <div
         id="packet-simulator-modal"
-        className="w-full max-w-2xl bg-slate-900 border border-cyan-500/40 rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
+        className="w-full max-w-2xl bg-panel border border-accent/40 rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
       >
         {/* Header */}
         <div
           id="packet-sim-header"
-          className="flex items-center justify-between px-5 py-3.5 bg-slate-950 border-b border-slate-800"
+          className="flex items-center justify-between px-5 py-3.5 bg-panel border-b border-line"
         >
           <div className="flex items-center space-x-3">
-            <div className="p-2 rounded-lg bg-emerald-950 border border-emerald-800 text-emerald-400">
+            <div className="p-2 rounded-lg bg-ok-soft border border-ok text-ok">
               <Send className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-ink flex items-center gap-2">
                 <span>Packet Transmission Simulator</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono">
+                <span className="text-xs px-2 py-0.5 rounded bg-accent-soft text-accent border border-accent font-mono">
                   Hop-by-Hop Engine
                 </span>
               </h3>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-ink-muted">
                 Simulate data frames traversing router and switch interfaces across graph topology
               </p>
             </div>
@@ -85,7 +95,7 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
           <button
             id="packet-sim-close-btn"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
+            className="p-1.5 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -96,15 +106,15 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
           {/* Source & Destination Selection */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Source Device */}
-            <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
-              <label className="text-xs font-semibold text-cyan-400 uppercase tracking-wider block">
+            <div className="p-3 rounded-xl bg-panel/80 border border-line space-y-2">
+              <label className="text-xs font-semibold text-accent uppercase tracking-wider block">
                 Source Device
               </label>
               <select
                 id="select-packet-source"
                 value={sourceId}
                 onChange={(e) => setSourceId(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-mono focus:border-cyan-500 focus:outline-none"
+                className="w-full px-3 py-2 rounded-lg bg-panel border border-line text-ink text-xs font-mono focus:border-accent focus:outline-none"
               >
                 {devices.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -112,22 +122,22 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
                   </option>
                 ))}
               </select>
-              <div className="text-[11px] text-slate-400 font-mono flex items-center justify-between">
+              <div className="text-[11px] text-ink-muted font-mono flex items-center justify-between">
                 <span>Model:</span>
-                <span className="text-slate-300">{deviceMap.get(sourceId)?.model || 'Unknown'}</span>
+                <span className="text-ink-soft">{deviceMap.get(sourceId)?.model || 'Unknown'}</span>
               </div>
             </div>
 
             {/* Target Device */}
-            <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
-              <label className="text-xs font-semibold text-cyan-400 uppercase tracking-wider block">
+            <div className="p-3 rounded-xl bg-panel/80 border border-line space-y-2">
+              <label className="text-xs font-semibold text-accent uppercase tracking-wider block">
                 Destination Device
               </label>
               <select
                 id="select-packet-target"
                 value={targetId}
                 onChange={(e) => setTargetId(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-mono focus:border-cyan-500 focus:outline-none"
+                className="w-full px-3 py-2 rounded-lg bg-panel border border-line text-ink text-xs font-mono focus:border-accent focus:outline-none"
               >
                 {devices.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -135,17 +145,17 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
                   </option>
                 ))}
               </select>
-              <div className="text-[11px] text-slate-400 font-mono flex items-center justify-between">
+              <div className="text-[11px] text-ink-muted font-mono flex items-center justify-between">
                 <span>Model:</span>
-                <span className="text-slate-300">{deviceMap.get(targetId)?.model || 'Unknown'}</span>
+                <span className="text-ink-soft">{deviceMap.get(targetId)?.model || 'Unknown'}</span>
               </div>
             </div>
           </div>
 
           {/* Speed / Hop Pause */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 border border-slate-800 text-xs">
-            <div className="flex items-center space-x-2 text-slate-300">
-              <Clock className="w-4 h-4 text-cyan-400" />
+          <div className="flex items-center justify-between p-3 rounded-xl bg-panel/50 border border-line text-xs">
+            <div className="flex items-center space-x-2 text-ink-soft">
+              <Clock className="w-4 h-4 text-accent" />
               <span>Hop Traversal Delay (Pause):</span>
             </div>
             <div className="flex items-center space-x-2 font-mono">
@@ -155,8 +165,8 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
                   onClick={() => setSpeed(val)}
                   className={`px-2.5 py-1 rounded text-xs transition-colors ${
                     speed === val
-                      ? 'bg-cyan-500 text-slate-950 font-bold'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                      ? 'bg-accent text-accent-ink font-bold'
+                      : 'bg-panel hover:bg-overlay text-ink-soft'
                   }`}
                 >
                   {val}ms
@@ -166,18 +176,18 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
           </div>
 
           {/* Route Discovery & Path Preview */}
-          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 space-y-2.5">
+          <div className="p-3.5 rounded-xl bg-panel/90 border border-line space-y-2.5">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-slate-300 flex items-center gap-1.5">
-                <Activity className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="font-semibold text-ink-soft flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-accent" />
                 <span>Computed Route Path</span>
               </span>
               {routePreview?.success ? (
-                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800">
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-ok-soft text-ok border border-ok">
                   {routePreview.hops.length} Hops Discovered
                 </span>
               ) : (
-                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-rose-950 text-rose-400 border border-rose-800">
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-bad-soft text-bad border border-bad">
                   No Valid Path
                 </span>
               )}
@@ -192,15 +202,15 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
 
                   return (
                     <React.Fragment key={devId}>
-                      <div className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-200">
-                        <span className="font-bold text-cyan-300">{dev?.name || devId}</span>
-                        <span className="text-[10px] text-slate-400 font-normal">({dev?.type})</span>
+                      <div className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-panel border border-line text-ink">
+                        <span className="font-bold text-accent">{dev?.name || devId}</span>
+                        <span className="text-[10px] text-ink-muted font-normal">({dev?.type})</span>
                       </div>
                       {!isLast && (
-                        <div className="flex items-center text-slate-500 text-[11px]">
-                          <span className="text-cyan-500/80 mr-1">{hop?.fromPort}</span>
-                          <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="text-cyan-500/80 ml-1">{hop?.toPort}</span>
+                        <div className="flex items-center text-accent-ink text-[11px]">
+                          <span className="text-accent/80 mr-1">{hop?.fromPort}</span>
+                          <ArrowRight className="w-3.5 h-3.5 text-ink-muted" />
+                          <span className="text-accent/80 ml-1">{hop?.toPort}</span>
                         </div>
                       )}
                     </React.Fragment>
@@ -208,7 +218,7 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
                 })}
               </div>
             ) : (
-              <p className="text-xs text-rose-400/90 font-mono">
+              <p className="text-xs text-bad/90 font-mono">
                 {routePreview?.error || 'Select distinct source and destination devices.'}
               </p>
             )}
@@ -216,36 +226,107 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
 
           {/* Simulation Log Stream */}
           {simulationState.logs.length > 0 && (
-            <div className="p-3 rounded-xl bg-[#030712] border border-slate-800 space-y-1.5 font-mono text-xs max-h-36 overflow-y-auto">
-              <div className="text-[11px] text-slate-500 font-sans font-semibold mb-1">Transmission Telemetry:</div>
+            <div className="p-3 rounded-xl bg-[#030712] border border-line space-y-1.5 font-mono text-xs max-h-36 overflow-y-auto">
+              <div className="text-[11px] text-accent-ink font-sans font-semibold mb-1">Transmission Telemetry:</div>
               {simulationState.logs.map((log) => (
                 <div
                   key={log.id}
                   className={`flex items-start space-x-2 text-[11px] ${
                     log.type === 'success'
-                      ? 'text-emerald-400'
+                      ? 'text-ok'
                       : log.type === 'error'
-                      ? 'text-rose-400'
-                      : 'text-slate-300'
+                      ? 'text-bad'
+                      : 'text-ink-soft'
                   }`}
                 >
-                  <span className="text-slate-500">[{log.timestamp}]</span>
+                  <span className="text-accent-ink">[{log.timestamp}]</span>
                   <span>{log.message}</span>
                 </div>
               ))}
             </div>
           )}
+
+          {/* Packet Generator */}
+          <div className="p-3.5 rounded-xl bg-panel/90 border border-line space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-ink-soft flex items-center gap-1.5">
+                <Settings className="w-3.5 h-3.5 text-ai" />
+                <span>Packet Generator</span>
+              </span>
+              {packetGeneratorConfig.running && (
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-ai-soft text-ai border border-ai animate-pulse">
+                  Running
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] text-ink-muted font-mono block mb-1">Packet Count</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={genCount}
+                  onChange={(e) => setGenCount(Math.max(1, Number(e.target.value)))}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-panel border border-line text-ink text-xs font-mono focus:border-ai focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-ink-muted font-mono block mb-1">Interval (ms)</label>
+                <input
+                  type="number"
+                  min={10}
+                  max={5000}
+                  value={genInterval}
+                  onChange={(e) => setGenInterval(Math.max(10, Number(e.target.value)))}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-panel border border-line text-ink text-xs font-mono focus:border-ai focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {!packetGeneratorConfig.running ? (
+                <button
+                  onClick={() =>
+                    onStartPacketGenerator({
+                      packetCount: genCount,
+                      intervalMs: genInterval,
+                      sourceId,
+                      destinationId: targetId,
+                      running: true,
+                    })
+                  }
+                  className="flex-1 flex items-center justify-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r from-ai to-info hover:from-ai hover:to-info text-ink text-xs font-semibold shadow-md transition-all cursor-pointer"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>Start Generator</span>
+                </button>
+              ) : (
+                <button
+                  onClick={onStopPacketGenerator}
+                  className="flex-1 flex items-center justify-center space-x-2 px-3 py-2 rounded-lg bg-bad hover:bg-bad text-ink text-xs font-semibold shadow-md transition-all cursor-pointer"
+                >
+                  <Pause className="w-3.5 h-3.5" />
+                  <span>Stop Generator</span>
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] text-ink-faint font-mono">
+              Generates {genCount} packets from {sourceId} → {targetId} at {genInterval}ms intervals
+            </p>
+          </div>
         </div>
 
         {/* Footer Actions */}
-        <div className="px-5 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
-          <div className="text-xs text-slate-500">
+        <div className="px-5 py-3 bg-panel border-t border-line flex items-center justify-between">
+          <div className="text-xs text-accent-ink">
             Payload: Glowing 64-byte Ethernet Frame (White □□□□ with green glow)
           </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={onClose}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+              className="px-3 py-1.5 rounded-lg text-xs font-medium text-ink-muted hover:text-ink hover:bg-raised transition-colors"
             >
               Close
             </button>
@@ -255,8 +336,8 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
               disabled={!routePreview?.success || simulationState.active}
               className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold shadow-lg transition-all ${
                 routePreview?.success && !simulationState.active
-                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-950/40 cursor-pointer active:scale-98'
-                  : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  ? 'bg-gradient-to-r from-ok to-info hover:from-ok hover:to-info text-accent-ink shadow-black/40 cursor-pointer active:scale-98'
+                  : 'bg-panel text-accent-ink cursor-not-allowed'
               }`}
             >
               <Play className="w-3.5 h-3.5 fill-current" />

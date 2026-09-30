@@ -2,6 +2,8 @@ export type DeviceType = 'router' | 'switch' | 'pc';
 
 export type InterfaceStatus = 'up' | 'down';
 
+export type DeviceStatus = 'running' | 'stopped';
+
 export interface NetworkInterface {
   id: string; // e.g. "Gi0/0", "Fa0/1"
   name: string;
@@ -38,6 +40,7 @@ export interface NetworkDevice {
   iosVersion: string;
   uptime: string;
   cliConfig: DeviceCLIConfig;
+  status: DeviceStatus;
 }
 
 export interface NetworkCable {
@@ -49,6 +52,13 @@ export interface NetworkCable {
   controlPoint: { x: number; y: number } | null;
   status: 'active' | 'down';
   cableType: 'straight-through' | 'crossover' | 'fiber' | 'serial';
+  cost?: number;
+  bandwidth?: number; // Mbps
+  latency?: number; // ms (legacy, backend compat)
+  lossProbability?: number; // 0-1 (legacy, backend compat)
+  delay?: number; // ms — animation duration = delay * 10
+  packetLoss?: number; // % — chance packet is dropped on this link
+  currentPackets?: number; // congestion tracking
 }
 
 export interface PacketHop {
@@ -68,6 +78,21 @@ export interface PacketLogEntry {
   hop?: number;
 }
 
+export interface Packet {
+  id: string;
+  source: string;
+  destination: string;
+  route: string[];
+  currentHop: number;
+  progress: number; // 0 to 1
+  color: string;
+  status: 'routing' | 'transmitting' | 'success' | 'failed' | 'dropped';
+  droppedAtHop?: number;
+  dropReason?: string;
+  logs: PacketLogEntry[];
+  createdAt: number;
+}
+
 export interface PacketSimulationState {
   active: boolean;
   sourceId: string | null;
@@ -79,6 +104,28 @@ export interface PacketSimulationState {
   droppedAtHop?: number;
   message: string;
   logs: PacketLogEntry[];
+}
+
+export interface PacketGeneratorConfig {
+  packetCount: number;
+  intervalMs: number;
+  sourceId: string;
+  destinationId: string;
+  running: boolean;
+}
+
+export interface SimulationMetrics {
+  packetsSent: number;
+  packetsDelivered: number;
+  packetsDropped: number;
+  packetDeliveryRatio: number;
+  averageDelay: number;
+  throughput: number;
+  linkUtilization: number;
+  activeFlows: number;
+  failedLinks: number;
+  aiRouteChanges: number;
+  averageHopCount: number;
 }
 
 export type ActiveNavTab =

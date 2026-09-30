@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { NetworkCable, NetworkDevice, PacketHop, PacketSimulationState } from '../types/network';
+import { NetworkCable, NetworkDevice, Packet, PacketHop, PacketSimulationState } from '../types/network';
 import { DeviceIcon } from './DeviceIcons';
-import { getPointOnCable } from '../utils/networkRouting';
-import {
+import { getPointOnCable } from '../utils/networkRouting';import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
@@ -59,6 +58,10 @@ interface NetworkCanvasProps {
   isMarqueeMode: boolean;
   onSelectAllDevices: () => void;
   onDeleteSelected: () => void;
+  // AI route path highlighting
+  aiPathCableIds: Set<string>;
+  // Multi-packet simulation
+  packets: Packet[];
 }
 
 export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
@@ -99,6 +102,8 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
   isMarqueeMode,
   onSelectAllDevices,
   onDeleteSelected,
+  aiPathCableIds,
+  packets,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState<number>(1.0); // 0.5 to 2.5
@@ -646,6 +651,34 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
         deviceMap.get(simulationState.hops[simulationState.droppedAtHop].fromDeviceId)
       : null;
 
+  // Helper: get pixel position of a multi-packet on its current cable
+  const getPacketPosition = (
+    packet: Packet,
+    devMap: Map<string, NetworkDevice>,
+    cableList: NetworkCable[]
+  ): { x: number; y: number } | null => {
+    if (packet.currentHop >= packet.route.length - 1) {
+      const dest = devMap.get(packet.destination);
+      return dest ? { x: dest.x + 32, y: dest.y + 32 } : null;
+    }
+    const from = packet.route[packet.currentHop];
+    const to = packet.route[packet.currentHop + 1];
+    const cable = cableList.find(
+      (c) =>
+        (c.fromDeviceId === from && c.toDeviceId === to) ||
+        (c.fromDeviceId === to && c.toDeviceId === from)
+    );
+    if (!cable) return null;
+    const fromDev = devMap.get(cable.fromDeviceId);
+    const toDev = devMap.get(cable.toDeviceId);
+    if (!fromDev || !toDev) return null;
+    const x1 = fromDev.x + 32;
+    const y1 = fromDev.y + 32;
+    const x2 = toDev.x + 32;
+    const y2 = toDev.y + 32;
+    return getPointOnCable(x1, y1, x2, y2, cable.controlPoint, packet.progress);
+  };
+
   // Render Background Shapes (ordered by layerOrder)
   const backgroundShapes = annotations
     .filter((a) => a.type !== 'text')
@@ -1089,6 +1122,17 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
 
             const isSelected = selectedCableId === cable.id;
             const isHovered = hoveredCableId === cable.id;
+            const isOnAiPath = aiPathCableIds.has(cable.id);
+
+            // Congestion-based color: green → yellow → orange → red
+            const currentPackets = cable.currentPackets ?? 0;
+            const bandwidth = cable.bandwidth ?? 100;
+            const utilization = Math.min(1, currentPackets / Math.max(1, bandwidth));
+            const congestionColor =
+              utilization > 0.9 ? '#EF4444' :
+              utilization > 0.7 ? '#F97316' :
+              utilization > 0.3 ? '#FBBF24' :
+              '#22C55E';
 
             const midX = (x1 + x2) / 2;
             const midY = (y1 + y2) / 2;
@@ -1124,11 +1168,11 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
                   }}
                 />
 
-                {/* Cable Glow when selected */}
-                {isSelected && (
+                {/* Cable Glow when selected or on AI path */}
+                {(isSelected || isOnAiPath) && (
                   <path
                     d={pathD}
-                    stroke="#22D3EE"
+                    stroke={isOnAiPath ? '#22C55E' : '#22D3EE'}
                     strokeWidth="6"
                     strokeOpacity="0.4"
                     fill="none"
@@ -1142,17 +1186,15 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
                   stroke={
                     cable.status === 'down'
                       ? '#EF4444'
+                      : isOnAiPath
+                      ? '#22C55E'
                       : isSelected
                       ? '#22D3EE'
                       : isHovered
                       ? '#38BDF8'
-                      : cable.cableType === 'crossover'
-                      ? '#F59E0B'
-                      : cable.cableType === 'serial'
-                      ? '#EC4899'
-                      : '#38BDF8'
+                      : congestionColor
                   }
-                  strokeWidth={isSelected ? 3 : 2.2}
+                  strokeWidth={isSelected || isOnAiPath ? 3.5 : 2.2}
                   strokeDasharray={
                     cable.cableType === 'crossover' ? '6,3' : cable.cableType === 'serial' ? '8,4' : undefined
                   }
@@ -1195,7 +1237,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
                 )}
 
                 {/* Small Port Name Labels */}
-                <g className="pointer-events-none select-none text-[9px] font-mono fill-slate-300">
+                <g className="pointer-events-none select-none text-[9px] font-mono fill-ink-soft">
                   <rect
                     x={p1X - 16}
                     y={p1Y - 7}
@@ -1296,6 +1338,57 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
           </g>
         )}
 
+        {/* LAYER 3b: MULTI-PACKET SIMULATION — all active packets */}
+        <g id="layer-multi-packets">
+          {packets
+            .filter((p) => p.status === 'routing' || p.status === 'transmitting')
+            .map((packet) => {
+              const pos = getPacketPosition(packet, deviceMap, cables);
+              if (!pos) return null;
+
+              return (
+                <g
+                  key={packet.id}
+                  transform={`translate(${pos.x}, ${pos.y})`}
+                  filter="url(#packetGlowCyan)"
+                >
+                  {/* Packet dot */}
+                  <circle cx="0" cy="0" r="6" fill={packet.color} stroke="#FFFFFF" strokeWidth="1.5" />
+                  {/* Ping ring */}
+                  <circle
+                    cx="0"
+                    cy="0"
+                    r="10"
+                    fill="none"
+                    stroke={packet.color}
+                    strokeWidth="1"
+                    opacity="0.6"
+                    className="animate-ping"
+                    style={{ animationDuration: '1s' }}
+                  />
+                </g>
+              );
+            })}
+        </g>
+
+        {/* Dropped packet indicators */}
+        <g id="layer-dropped-packets">
+          {packets
+            .filter((p) => p.status === 'dropped' || p.status === 'failed')
+            .map((packet) => {
+              const pos = getPacketPosition(packet, deviceMap, cables);
+              if (!pos) return null;
+
+              return (
+                <g key={packet.id} transform={`translate(${pos.x}, ${pos.y})`}>
+                  <circle cx="0" cy="0" r="8" fill="#991B1B" stroke="#FCA5A5" strokeWidth="1.5" />
+                  <line x1="-4" y1="-4" x2="4" y2="4" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" />
+                  <line x1="4" y1="-4" x2="-4" y2="4" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" />
+                </g>
+              );
+            })}
+        </g>
+
         {/* Marquee Selection Visual Box */}
         {marqueeStart && marqueeCurrent && (
           <rect
@@ -1354,14 +1447,14 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
               <div
                 className={`relative p-1 rounded-2xl transition-all ${
                   isConnectSource
-                    ? 'ring-4 ring-cyan-400 ring-offset-2 ring-offset-[#050816] shadow-xl shadow-cyan-500/40 bg-cyan-950/40'
+                    ? 'ring-4 ring-accent ring-offset-2 ring-offset-[#050816] shadow-xl shadow-black/40 bg-accent-soft/40'
                     : isSelected
-                    ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-[#050816] shadow-lg shadow-cyan-950/60 bg-slate-900/60'
+                    ? 'ring-2 ring-accent ring-offset-1 ring-offset-[#050816] shadow-lg shadow-black/60 bg-panel/60'
                     : isConnectHoverCandidate
-                    ? 'hover:ring-2 hover:ring-emerald-400 hover:bg-emerald-950/40'
+                    ? 'hover:ring-2 hover:ring-ok hover:bg-ok-soft/40'
                     : isCurrentHop
-                    ? 'ring-2 ring-emerald-400 shadow-lg shadow-emerald-950/60'
-                    : 'hover:bg-slate-900/40'
+                    ? 'ring-2 ring-ok shadow-lg shadow-black/60'
+                    : 'hover:bg-panel/40'
                 }`}
               >
                 <DeviceIcon type={device.type} size={58} isSelected={isSelected || isConnectSource} />
@@ -1372,13 +1465,13 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
                 <span
                   className={`text-xs font-bold font-mono px-1.5 py-0.5 rounded shadow-sm border transition-colors ${
                     isSelected
-                      ? 'bg-cyan-950 text-cyan-300 border-cyan-500/60'
-                      : 'bg-slate-900/90 text-slate-100 border-slate-700/80'
+                      ? 'bg-accent-soft text-accent border-accent/60'
+                      : 'bg-panel/90 text-ink border-line/80'
                   }`}
                 >
                   {device.name}
                 </span>
-                <span className="text-[10px] text-slate-400 font-mono mt-0.5 bg-[#050816]/90 px-1 rounded">
+                <span className="text-[10px] text-ink-muted font-mono mt-0.5 bg-[#050816]/90 px-1 rounded">
                   {device.ipAddress}
                 </span>
               </div>
@@ -1450,7 +1543,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
                         ? item.backgroundColor
                         : '#0F172A',
                   }}
-                  className={`w-full px-2 py-1 rounded-lg border-2 border-cyan-400 outline-none shadow-xl ${fontFamilyClass}`}
+                  className={`w-full px-2 py-1 rounded-lg border-2 border-accent outline-none shadow-xl ${fontFamilyClass}`}
                 />
               ) : (
                 <div
@@ -1472,7 +1565,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
                         : 'transparent',
                   }}
                   className={`w-full px-2.5 py-1 rounded-lg ${
-                    isSelected ? 'ring-2 ring-cyan-400 shadow-lg' : ''
+                    isSelected ? 'ring-2 ring-accent shadow-lg' : ''
                   } ${fontFamilyClass} ${
                     item.backgroundColor && item.backgroundColor !== 'transparent'
                       ? 'shadow-md backdrop-blur-sm'
@@ -1480,7 +1573,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
                   }`}
                 >
                   <span>{item.text || 'Double-click to type'}</span>
-                  {item.isLocked && <Lock className="inline-block w-3 h-3 ml-1 text-amber-400" />}
+                  {item.isLocked && <Lock className="inline-block w-3 h-3 ml-1 text-warn" />}
                 </div>
               )}
             </div>
@@ -1492,15 +1585,15 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
       {selectedDeviceIds.length > 1 && (
         <div
           id="multi-selection-actions-bar"
-          className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur-md border border-cyan-500/60 rounded-xl px-4 py-2 text-xs text-white flex items-center space-x-3 shadow-2xl z-30 animate-in fade-in"
+          className="absolute top-4 left-1/2 -translate-x-1/2 bg-panel/95 backdrop-blur-md border border-accent/60 rounded-xl px-4 py-2 text-xs text-accent-ink flex items-center space-x-3 shadow-2xl z-30 animate-in fade-in"
         >
-          <span className="font-bold text-cyan-300 font-mono">
+          <span className="font-bold text-accent font-mono">
             {selectedDeviceIds.length} Devices Selected
           </span>
-          <div className="h-4 w-px bg-slate-700" />
+          <div className="h-4 w-px bg-raised" />
           <button
             onClick={onDeleteSelected}
-            className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-rose-950 hover:bg-rose-900 text-rose-200 border border-rose-700 transition-colors cursor-pointer"
+            className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-bad-soft hover:bg-bad-soft text-bad border border-bad transition-colors cursor-pointer"
             title="Delete all selected devices"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -1512,31 +1605,31 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
       {/* Bottom Right Floating Zoom Indicator & Controls */}
       <div
         id="topology-zoom-controls"
-        className="absolute bottom-4 right-4 flex items-center space-x-2 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl p-1.5 shadow-xl z-30 select-none text-xs text-slate-300 font-mono"
+        className="absolute bottom-4 right-4 flex items-center space-x-2 bg-panel/90 backdrop-blur-md border border-line rounded-xl p-1.5 shadow-xl z-30 select-none text-xs text-ink-soft font-mono"
       >
         <button
           id="zoom-out-btn"
           onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}
-          className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
+          className="p-1 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
           title="Zoom Out"
         >
           <ZoomOut className="w-3.5 h-3.5" />
         </button>
 
-        <span className="px-2 font-semibold text-cyan-300">
+        <span className="px-2 font-semibold text-accent">
           Zoom {Math.round(zoom * 100)}%
         </span>
 
         <button
           id="zoom-in-btn"
           onClick={() => setZoom((z) => Math.min(2.5, +(z + 0.1).toFixed(2)))}
-          className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
+          className="p-1 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
           title="Zoom In"
         >
           <ZoomIn className="w-3.5 h-3.5" />
         </button>
 
-        <div className="h-4 w-px bg-slate-800 mx-1" />
+        <div className="h-4 w-px bg-panel mx-1" />
 
         <button
           id="zoom-reset-btn"
@@ -1544,7 +1637,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
             setZoom(1.0);
             setPan({ x: 0, y: 0 });
           }}
-          className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
+          className="p-1 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
           title="Reset Zoom & Pan (100%)"
         >
           <RotateCcw className="w-3.5 h-3.5" />
@@ -1555,9 +1648,9 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
       {isConnectMode && (
         <div
           id="connect-mode-banner"
-          className="absolute top-4 left-1/2 -translate-x-1/2 bg-cyan-950/90 backdrop-blur-md border border-cyan-500/60 rounded-full px-4 py-1.5 text-xs text-cyan-300 font-medium flex items-center space-x-2 shadow-xl shadow-cyan-950/50 z-30 animate-pulse"
+          className="absolute top-4 left-1/2 -translate-x-1/2 bg-accent-soft/90 backdrop-blur-md border border-accent/60 rounded-full px-4 py-1.5 text-xs text-accent font-medium flex items-center space-x-2 shadow-xl shadow-black/50 z-30 animate-pulse"
         >
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+          <span className="w-2 h-2 rounded-full bg-accent animate-ping" />
           <span>
             {connectSourceDevice
               ? `Connecting from ${connectSourceDevice.name}. Click destination device.`
@@ -1572,18 +1665,18 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
           id="simulation-progress-banner"
           className={`absolute top-4 left-1/2 -translate-x-1/2 backdrop-blur-md border rounded-full px-4 py-1.5 text-xs font-medium flex items-center space-x-2 shadow-xl z-30 ${
             simulationState.status === 'failed'
-              ? 'bg-rose-950/90 border-rose-500/60 text-rose-300'
+              ? 'bg-bad-soft/90 border-bad/60 text-bad'
               : simulationState.status === 'success'
-              ? 'bg-emerald-950/90 border-emerald-500/60 text-emerald-300'
-              : 'bg-slate-900/90 border-cyan-500/60 text-cyan-300'
+              ? 'bg-ok-soft/90 border-ok/60 text-ok'
+              : 'bg-panel/90 border-accent/60 text-accent'
           }`}
         >
           {simulationState.status === 'failed' ? (
-            <XCircle className="w-3.5 h-3.5 text-rose-400" />
+            <XCircle className="w-3.5 h-3.5 text-bad" />
           ) : simulationState.status === 'success' ? (
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            <CheckCircle2 className="w-3.5 h-3.5 text-ok" />
           ) : (
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span className="w-2 h-2 rounded-full bg-ok animate-ping" />
           )}
           <span>{simulationState.message}</span>
         </div>

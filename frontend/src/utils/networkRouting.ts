@@ -9,9 +9,9 @@ export interface RouteDiscoveryResult {
 }
 
 /**
- * Builds an adjacency graph from active cables and finds the shortest path
- * between sourceDeviceId and targetDeviceId using Breadth-First Search (BFS).
- * Works for any number of devices (3, 8, 15, 30+).
+ * Builds an adjacency graph from active cables and running devices, then finds
+ * the shortest path between sourceDeviceId and targetDeviceId using BFS.
+ * Only uses cables with status 'active' and devices with status 'running'.
  */
 export function discoverRoute(
   sourceDeviceId: string,
@@ -43,8 +43,25 @@ export function discoverRoute(
     };
   }
 
-  // Build adjacency list
-  // Map from deviceId to array of { neighborId, cableId, fromPort, toPort }
+  // Check device status — stopped devices are ignored
+  if (sourceDevice.status === 'stopped') {
+    return {
+      success: false,
+      hops: [],
+      devicesPath: [],
+      error: `Source device '${sourceDevice.name}' is stopped`,
+    };
+  }
+  if (targetDevice.status === 'stopped') {
+    return {
+      success: false,
+      hops: [],
+      devicesPath: [],
+      error: `Target device '${targetDevice.name}' is stopped`,
+    };
+  }
+
+  // Build adjacency list — only active cables and running devices
   interface Edge {
     neighborId: string;
     cable: NetworkCable;
@@ -53,10 +70,20 @@ export function discoverRoute(
   }
 
   const adj = new Map<string, Edge[]>();
-  devices.forEach((d) => adj.set(d.id, []));
+  devices.forEach((d) => {
+    if (d.status === 'running') adj.set(d.id, []);
+  });
 
   cables.forEach((cable) => {
-    // Check if cable devices exist
+    // Skip down cables
+    if (cable.status !== 'active') return;
+
+    // Skip cables connected to stopped devices
+    const fromDev = deviceMap.get(cable.fromDeviceId);
+    const toDev = deviceMap.get(cable.toDeviceId);
+    if (!fromDev || !toDev) return;
+    if (fromDev.status !== 'running' || toDev.status !== 'running') return;
+
     if (!adj.has(cable.fromDeviceId)) adj.set(cable.fromDeviceId, []);
     if (!adj.has(cable.toDeviceId)) adj.set(cable.toDeviceId, []);
 

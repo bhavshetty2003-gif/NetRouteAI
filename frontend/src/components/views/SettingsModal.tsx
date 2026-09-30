@@ -17,20 +17,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   return (
     <div
       id="settings-modal-overlay"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-base/70 backdrop-blur-xs p-4 select-none"
     >
       <div
         id="settings-modal"
-        className="w-full max-w-lg bg-slate-900 border border-cyan-500/40 rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
+        className="w-full max-w-lg bg-panel border border-accent/40 rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
       >
-        <div className="flex items-center justify-between px-5 py-3.5 bg-slate-950 border-b border-slate-800">
-          <div className="flex items-center space-x-2.5 text-slate-100 font-bold text-sm">
-            <Settings className="w-4 h-4 text-cyan-400" />
+        <div className="flex items-center justify-between px-5 py-3.5 bg-panel border-b border-line">
+          <div className="flex items-center space-x-2.5 text-ink font-bold text-sm">
+            <Settings className="w-4 h-4 text-accent" />
             <span>NetRouteAI Settings</span>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
+            className="p-1.5 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -38,45 +38,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         <div className="p-5 space-y-4 text-xs">
           <div className="space-y-3">
-            <h4 className="font-semibold text-cyan-400 uppercase tracking-wider text-[11px]">
+            <h4 className="font-semibold text-accent uppercase tracking-wider text-[11px]">
               Canvas & Rendering
             </h4>
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <div className="p-3 rounded-xl bg-panel border border-line space-y-2">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-medium text-slate-200">Interactive Cable Control Handles</div>
-                  <div className="text-[11px] text-slate-400">Enables dynamic midpoint bending handles</div>
+                  <div className="font-medium text-ink">Interactive Cable Control Handles</div>
+                  <div className="text-[11px] text-ink-muted">Enables dynamic midpoint bending handles</div>
                 </div>
-                <span className="text-emerald-400 font-bold">Enabled</span>
+                <span className="text-ok font-bold">Enabled</span>
               </div>
             </div>
 
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <div className="p-3 rounded-xl bg-panel border border-line space-y-2">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-medium text-slate-200">Packet Glow Aura Shader</div>
-                  <div className="text-[11px] text-slate-400">High-contrast SVG glow filter for data frames</div>
+                  <div className="font-medium text-ink">Packet Glow Aura Shader</div>
+                  <div className="text-[11px] text-ink-muted">High-contrast SVG glow filter for data frames</div>
                 </div>
-                <span className="text-emerald-400 font-bold">Enabled</span>
+                <span className="text-ok font-bold">Enabled</span>
               </div>
             </div>
           </div>
 
           <div className="space-y-3 pt-2">
-            <h4 className="font-semibold text-cyan-400 uppercase tracking-wider text-[11px]">
+            <h4 className="font-semibold text-accent uppercase tracking-wider text-[11px]">
               Storage & Cache Management
             </h4>
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+            <div className="p-3 rounded-xl bg-panel border border-line flex items-center justify-between">
               <div>
-                <div className="font-medium text-slate-200">Reset LocalStorage Topology</div>
-                <div className="text-[11px] text-slate-400">Clears saved network topology state from browser</div>
+                <div className="font-medium text-ink">Reset LocalStorage Topology</div>
+                <div className="text-[11px] text-ink-muted">Clears saved network topology state from browser</div>
               </div>
               <button
                 onClick={() => {
                   onClearLocalStorage();
                   onClose();
                 }}
-                className="px-3 py-1.5 rounded-lg bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-800 transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-bad-soft/60 hover:bg-bad-soft/80 text-bad border border-bad transition-colors"
               >
                 Clear Data
               </button>
@@ -84,10 +84,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
 
-        <div className="px-5 py-3 bg-slate-950 border-t border-slate-800 flex justify-end">
+        <div className="px-5 py-3 bg-panel border-t border-line flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition-colors"
+            className="px-4 py-1.5 rounded-lg bg-accent hover:bg-accent text-accent-ink font-bold text-xs transition-colors"
           >
             Done
           </button>

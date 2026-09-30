@@ -29,11 +29,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside
       id="app-sidebar"
-      className="w-56 lg:w-60 bg-slate-950 border-r border-slate-800/90 flex flex-col justify-between select-none shrink-0 z-30"
+      className="w-56 lg:w-60 bg-panel border-r border-line/90 flex flex-col justify-between select-none shrink-0 z-30"
     >
       {/* Navigation List */}
       <div className="p-3 space-y-1 overflow-y-auto">
-        <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+        <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-accent-ink">
           Navigation
         </div>
 
@@ -47,19 +47,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => onTabChange(item.id)}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-150 ${
                 isActive
-                  ? 'bg-gradient-to-r from-cyan-950/80 to-slate-900 text-cyan-400 border border-cyan-500/40 shadow-sm shadow-cyan-950/40'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/80'
+                  ? 'bg-gradient-to-r from-accent-soft/80 to-base text-accent border border-accent/40 shadow-sm shadow-black/40'
+                  : 'text-ink-muted hover:text-ink hover:bg-panel/80'
               }`}
             >
               <div className="flex items-center space-x-2.5">
-                <span className={isActive ? 'text-cyan-400' : 'text-slate-400'}>{item.icon}</span>
+                <span className={isActive ? 'text-accent' : 'text-ink-muted'}>{item.icon}</span>
                 <span>{item.label}</span>
               </div>
 
               {item.badge && (
                 <span
                   className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
-                    isActive ? 'bg-cyan-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'
+                    isActive ? 'bg-accent text-accent-ink font-bold' : 'bg-panel text-ink-muted'
                   }`}
                 >
                   {item.badge}
@@ -71,21 +71,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Bottom Status & Logout */}
-      <div className="p-3 border-t border-slate-800/80 space-y-2 bg-slate-950/40">
+      <div className="p-3 border-t border-line/80 space-y-2 bg-panel/40">
         {/* Network Status Widget */}
-        <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+        <div className="p-2.5 rounded-xl bg-panel/60 border border-line text-xs text-ink-muted flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[11px] font-mono text-slate-300">Engine Online</span>
+            <span className="w-2 h-2 rounded-full bg-ok animate-pulse" />
+            <span className="text-[11px] font-mono text-ink-soft">Engine Online</span>
           </div>
-          <span className="text-[10px] text-cyan-400 font-mono">0.4ms Latency</span>
+          <span className="text-[10px] text-accent font-mono">0.4ms Latency</span>
         </div>
 
         {/* Logout Button */}
         <button
           id="sidebar-logout-btn"
           onClick={onLogout}
-          className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-red-400 hover:bg-red-950/30 transition-colors"
+          className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-medium text-ink-muted hover:text-bad hover:bg-bad-soft/30 transition-colors"
         >
           <LogOut className="w-4 h-4" />
           <span>Logout</span>

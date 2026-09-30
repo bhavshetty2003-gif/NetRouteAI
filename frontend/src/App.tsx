@@ -4,12 +4,15 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Brain, X, XCircle } from 'lucide-react';
 import {
   ActiveNavTab,
   DeviceType,
   NetworkCable,
   NetworkDevice,
   NetworkInterface,
+  Packet,
+  PacketGeneratorConfig,
   PacketHop,
   PacketSimulationState,
 } from './types/network';
@@ -25,12 +28,16 @@ import {
   createPCInterfaces,
 } from './utils/presetTopologies';
 import { discoverRoute } from './utils/networkRouting';
+import { uploadTopology, getAiRouteRecommendation, AiRouteRecommendation } from './utils/api';
+import { createPacket, advancePacket, computeMetrics } from './utils/simulationEngine';
+import { SimulationMetricsPanel } from './components/SimulationMetricsPanel';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { DevicePalette } from './components/DevicePalette';
 import { NetworkCanvas } from './components/NetworkCanvas';
 import { DevicePropertiesPanel } from './components/DevicePropertiesPanel';
+import { CablePropertiesPanel } from './components/CablePropertiesPanel';
 import { InterfaceModal } from './components/InterfaceModal';
 import { CiscoCLIModal } from './components/CiscoCLIModal';
 import { PacketSimulatorModal } from './components/PacketSimulatorModal';
@@ -172,10 +179,15 @@ export default function App() {
   // Packet Simulator Modal State
   const [packetSimModalOpen, setPacketSimModalOpen] = useState<boolean>(false);
 
+  // AI Route Recommendation state
+  const [aiRouteResult, setAiRouteResult] = useState<AiRouteRecommendation | null>(null);
+  const [isAiAnalyzing, setIsAiAnalyzing] = useState<boolean>(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
   // Settings Modal State
   const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
 
-  // Packet Simulation State
+  // Packet Simulation State (legacy single-packet, kept for compatibility)
   const [simulationState, setSimulationState] = useState<PacketSimulationState>({
     active: false,
     sourceId: null,
@@ -188,9 +200,80 @@ export default function App() {
     logs: [],
   });
 
+  // Multi-packet simulation state
+  const [packets, setPackets] = useState<Packet[]>([]);
+  const [packetGeneratorConfig, setPacketGeneratorConfig] = useState<PacketGeneratorConfig>({
+    packetCount: 100,
+    intervalMs: 100,
+    sourceId: '',
+    destinationId: '',
+    running: false,
+  });
+  const packetGenIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const packetTickRef = useRef<NodeJS.Timeout | null>(null);
+
   // Reference to abort animation if re-triggered
   const animFrameRef = useRef<number | null>(null);
   const animTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Multi-packet tick loop — advances all active packets
+  useEffect(() => {
+    const tick = () => {
+      setPackets((prev) => {
+        if (prev.length === 0) return prev;
+        const cableUpdates = new Map<string, number>();
+        const updated = prev.map((packet) => {
+          if (packet.status !== 'routing' && packet.status !== 'transmitting') return packet;
+          const { packet: advanced, cableUpdates: updates } = advancePacket(packet, cables, devices);
+          updates.forEach((delta, cableId) => {
+            cableUpdates.set(cableId, (cableUpdates.get(cableId) || 0) + delta);
+          });
+          return advanced;
+        });
+        // Apply congestion updates to cables
+        if (cableUpdates.size > 0) {
+          setCables((prevCables) =>
+            prevCables.map((c) => {
+              const delta = cableUpdates.get(c.id);
+              if (!delta) return c;
+              const newCount = Math.max(0, (c.currentPackets ?? 0) + delta);
+              return { ...c, currentPackets: newCount };
+            })
+          );
+        }
+        return updated;
+      });
+      packetTickRef.current = setTimeout(tick, 16);
+    };
+    packetTickRef.current = setTimeout(tick, 16);
+    return () => {
+      if (packetTickRef.current) clearTimeout(packetTickRef.current);
+    };
+  }, [cables, devices]);
+
+  // Packet generator handlers
+  const handleStartPacketGenerator = (config: PacketGeneratorConfig) => {
+    setPacketGeneratorConfig(config);
+    let sent = 0;
+    const sendPacket = () => {
+      if (sent >= config.packetCount) {
+        setPacketGeneratorConfig((prev) => ({ ...prev, running: false }));
+        return;
+      }
+      const packet = createPacket(config.sourceId, config.destinationId, devices, cables);
+      if (packet) {
+        setPackets((prev) => [...prev, packet]);
+      }
+      sent++;
+      packetGenIntervalRef.current = setTimeout(sendPacket, config.intervalMs);
+    };
+    sendPacket();
+  };
+
+  const handleStopPacketGenerator = () => {
+    if (packetGenIntervalRef.current) clearTimeout(packetGenIntervalRef.current);
+    setPacketGeneratorConfig((prev) => ({ ...prev, running: false }));
+  };
 
   // Clean up animation on unmount
   useEffect(() => {
@@ -235,6 +318,74 @@ export default function App() {
       console.error('Failed to load topology:', e);
     }
   };
+
+  // Send Topology to AI Backend for Route Recommendation
+  const handleSendTopology = async () => {
+    if (devices.length < 2) {
+      alert('Add at least 2 devices to analyze.');
+      return;
+    }
+
+    setIsAiAnalyzing(true);
+    setAiError(null);
+    setAiRouteResult(null);
+
+    try {
+      // Convert frontend topology to backend format
+      const backendTopology = {
+        devices: devices.map((d) => ({
+          id: d.id,
+          type: d.type,
+          name: d.name,
+          x: d.x,
+          y: d.y,
+          ip_address: d.ipAddress || undefined,
+          gateway: d.gateway || undefined,
+        })),
+        links: cables.map((c) => ({
+          source: c.fromDeviceId,
+          target: c.toDeviceId,
+          cost: c.cost,
+          bandwidth: c.bandwidth,
+          latency: c.latency,
+          loss_probability: c.lossProbability,
+        })),
+        auto_ip: true,
+      };
+
+      // Upload topology to backend
+      const { topology_id } = await uploadTopology(backendTopology);
+
+      // Auto-pick source and destination: prefer routers as endpoints
+      const routers = devices.filter((d) => d.type === 'router');
+      const endpoints = routers.length >= 2 ? routers : devices;
+      const source = endpoints[0].id;
+      const destination = endpoints[endpoints.length - 1].id;
+
+      // Get AI route recommendation
+      const result = await getAiRouteRecommendation(topology_id, source, destination);
+      setAiRouteResult(result);
+    } catch (e: any) {
+      setAiError(e.message || 'AI analysis failed');
+      console.error('Send Topology error:', e);
+    } finally {
+      setIsAiAnalyzing(false);
+    }
+  };
+
+  // Compute which cable IDs are on the AI-recommended path (for green highlighting)
+  const aiPathCableIds = new Set<string>();
+  if (aiRouteResult?.best_route) {
+    const route = aiRouteResult.best_route;
+    for (let i = 0; i < route.length - 1; i++) {
+      const cable = cables.find(
+        (c) =>
+          (c.fromDeviceId === route[i] && c.toDeviceId === route[i + 1]) ||
+          (c.fromDeviceId === route[i + 1] && c.toDeviceId === route[i])
+      );
+      if (cable) aiPathCableIds.add(cable.id);
+    }
+  }
 
   // Preset Selection
   const handleSelectPreset = (preset: 'default' | 'star' | 'mesh' | 'tree' | 'bus' | 'ring') => {
@@ -317,6 +468,7 @@ export default function App() {
       type,
       x,
       y,
+      status: 'running',
       ipAddress: defaultIp,
       subnetMask: '255.255.255.0',
       gateway: defaultGateway,
@@ -414,6 +566,13 @@ export default function App() {
   // Update Cable Control Point (curve handle)
   const handleUpdateCableControlPoint = (cableId: string, controlPoint: { x: number; y: number } | null) => {
     setCables((prev) => prev.map((c) => (c.id === cableId ? { ...c, controlPoint } : c)));
+  };
+
+  // Update Cable Properties (cost, bandwidth, latency, loss)
+  const handleUpdateCable = (updatedCable: NetworkCable) => {
+    setCables((prev) =>
+      prev.map((c) => (c.id === updatedCable.id ? updatedCable : c))
+    );
   };
 
   // Update Device Properties
@@ -843,7 +1002,7 @@ export default function App() {
   // Dedicated SaaS Landing Page View vs Main Workspace Layout
   if (activeTab === 'home') {
     return (
-      <div id="netrouteai-root" className="min-h-screen bg-[#050816] text-slate-100 font-sans">
+      <div id="netrouteai-root" className="min-h-screen bg-[#050816] text-ink font-sans">
         <HomeView
           onLaunchDesigner={() => setActiveTab('designer')}
           deviceCount={devices.length}
@@ -856,7 +1015,7 @@ export default function App() {
   return (
     <div
       id="netrouteai-root"
-      className="h-screen overflow-hidden bg-[#050816] text-slate-100 flex flex-col font-sans"
+      className="h-screen overflow-hidden bg-[#050816] text-ink flex flex-col font-sans"
     >
       {/* 1. Full-Width Top Navbar */}
       <Navbar
@@ -917,6 +1076,8 @@ export default function App() {
               onSelectPreset={handleSelectPreset}
               onResetCanvas={handleResetCanvas}
               isSimulating={simulationState.active}
+              onSendTopology={handleSendTopology}
+              isAiAnalyzing={isAiAnalyzing}
               isDrawingPaletteOpen={isDrawingPaletteOpen}
               onToggleDrawingPalette={() => setIsDrawingPaletteOpen(!isDrawingPaletteOpen)}
               onSelectAllDevices={handleSelectAllDevices}
@@ -1008,6 +1169,8 @@ export default function App() {
                 isMarqueeMode={isMarqueeMode}
                 onSelectAllDevices={handleSelectAllDevices}
                 onDeleteSelected={handleDeleteSelected}
+                aiPathCableIds={aiPathCableIds}
+                packets={packets}
               />
 
               {/* Floating Cisco Packet Tracer Drawing Palette */}
@@ -1057,21 +1220,85 @@ export default function App() {
                 }
               />
 
-              {/* Right Device Configuration Panel */}
-              <DevicePropertiesPanel
-                device={selectedDevice}
-                onUpdateDevice={handleUpdateDevice}
-                onDeleteDevice={handleDeleteDevice}
-                onOpenCLI={(dev) => {
-                  setCliTargetDevice(dev);
-                  setCliModalOpen(true);
-                }}
-                onAddInterface={handleAddInterface}
-              />
+              {/* AI Route Recommendation Result Banner */}
+              {aiRouteResult && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-base/95 border border-ok/50 rounded-xl shadow-2xl shadow-black/30 px-5 py-3 max-w-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-ok/20 border border-ok/40">
+                      <Brain className="w-4 h-4 text-ok" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-ok">AI Recommended Route</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ok/20 text-ok border border-ok/30 font-mono">
+                          {aiRouteResult.confidence}% confidence
+                        </span>
+                      </div>
+                      <div className="text-xs text-ink-soft mt-0.5 font-mono">
+                        {aiRouteResult.best_route.join(' → ')}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 text-[10px] text-ink-muted font-mono">
+                        <span>Latency: {aiRouteResult.latency}ms</span>
+                        <span>Hops: {aiRouteResult.hop_count}</span>
+                        <span>Cost: {aiRouteResult.total_cost}</span>
+                        <span>Bandwidth: {aiRouteResult.metrics?.bandwidth} Mbps</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setAiRouteResult(null)}
+                      className="p-1 rounded-lg text-ink-faint hover:text-ink-soft hover:bg-panel transition-colors cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* AI Error Banner */}
+              {aiError && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-base/95 border border-bad/50 rounded-xl shadow-2xl px-5 py-3 max-w-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-bad/20 border border-bad/40">
+                      <XCircle className="w-4 h-4 text-bad" />
+                    </div>
+                    <div className="flex-1">
+                      <span className="text-xs font-bold text-bad">AI Analysis Failed</span>
+                      <div className="text-xs text-ink-soft mt-0.5">{aiError}</div>
+                    </div>
+                    <button
+                      onClick={() => setAiError(null)}
+                      className="p-1 rounded-lg text-ink-faint hover:text-ink-soft hover:bg-panel transition-colors cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Right Panel: Cable Properties when cable selected, Device Properties otherwise */}
+              {selectedCableId ? (
+                <CablePropertiesPanel
+                  cable={cables.find((c) => c.id === selectedCableId) || null}
+                  onUpdateCable={handleUpdateCable}
+                />
+              ) : selectedDeviceId ? (
+                <DevicePropertiesPanel
+                  device={selectedDevice}
+                  onUpdateDevice={handleUpdateDevice}
+                  onDeleteDevice={handleDeleteDevice}
+                  onOpenCLI={(dev) => {
+                    setCliTargetDevice(dev);
+                    setCliModalOpen(true);
+                  }}
+                  onAddInterface={handleAddInterface}
+                />
+              ) : (
+                <SimulationMetricsPanel packets={packets} cables={cables} />
+              )}
             </div>
           </div>
         ) : activeTab === 'analytics' ? (
-          <AnalyticsView devices={devices} cables={cables} />
+          <AnalyticsView />
         ) : (
           <MonitoringView
             devices={devices}
@@ -1140,6 +1367,9 @@ export default function App() {
           setActiveTab('designer');
           handleStartSimulation(src, dst, spd);
         }}
+        onStartPacketGenerator={handleStartPacketGenerator}
+        onStopPacketGenerator={handleStopPacketGenerator}
+        packetGeneratorConfig={packetGeneratorConfig}
       />
 
       {/* Settings Modal */}

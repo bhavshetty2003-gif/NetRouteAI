@@ -11,6 +11,7 @@ import {
   Palette,
   BoxSelect,
   CheckSquare,
+  Brain,
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -25,6 +26,8 @@ interface ToolbarProps {
   onSelectPreset: (preset: 'default' | 'star' | 'mesh' | 'tree' | 'bus' | 'ring') => void;
   onResetCanvas: () => void;
   isSimulating: boolean;
+  onSendTopology: () => void;
+  isAiAnalyzing: boolean;
   // Drawing Palette & Multi-select props
   isDrawingPaletteOpen: boolean;
   onToggleDrawingPalette: () => void;
@@ -45,6 +48,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onSelectPreset,
   onResetCanvas,
   isSimulating,
+  onSendTopology,
+  isAiAnalyzing,
   isDrawingPaletteOpen,
   onToggleDrawingPalette,
   onSelectAllDevices,
@@ -56,7 +61,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   return (
     <div
       id="network-designer-toolbar"
-      className="h-12 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between select-none z-10 shrink-0"
+      className="h-12 bg-panel border-b border-line px-4 flex items-center justify-between select-none z-10 shrink-0"
     >
       {/* Primary Action Buttons */}
       <div className="flex items-center space-x-2">
@@ -66,8 +71,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           onClick={onToggleConnectMode}
           className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
             isConnectMode
-              ? 'bg-cyan-500 text-slate-950 ring-2 ring-cyan-400 ring-offset-1 ring-offset-slate-900 animate-pulse'
-              : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+              ? 'bg-accent text-accent-ink ring-2 ring-accent ring-offset-1 ring-offset-base animate-pulse'
+              : 'bg-panel hover:bg-overlay text-ink border border-line'
           }`}
           title="Connect devices by clicking source then destination device"
         >
@@ -81,15 +86,15 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           onClick={onToggleDrawingPalette}
           className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
             isDrawingPaletteOpen
-              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/80 shadow-md shadow-cyan-950/50'
-              : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+              ? 'bg-accent/20 text-accent border border-accent/80 shadow-md shadow-black/50'
+              : 'bg-panel hover:bg-overlay text-ink border border-line'
           }`}
           title="Open Drawing Palette (Annotations, Shapes & Text Labels)"
         >
-          <Palette className={`w-3.5 h-3.5 ${isDrawingPaletteOpen ? 'text-cyan-400' : 'text-slate-300'}`} />
+          <Palette className={`w-3.5 h-3.5 ${isDrawingPaletteOpen ? 'text-accent' : 'text-ink-soft'}`} />
           <span>Drawing Palette</span>
           {isDrawingPaletteOpen && (
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
           )}
         </button>
 
@@ -99,12 +104,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           onClick={onToggleMarqueeMode}
           className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
             isMarqueeMode
-              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 ring-1 ring-cyan-400'
-              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+              ? 'bg-accent/20 text-accent border border-accent ring-1 ring-accent'
+              : 'bg-panel hover:bg-overlay text-ink-soft border border-line'
           }`}
           title="Drag and select multiple routers, switches, PCs, and annotations"
         >
-          <BoxSelect className="w-3.5 h-3.5 text-cyan-400" />
+          <BoxSelect className="w-3.5 h-3.5 text-accent" />
           <span>{isMarqueeMode ? 'Box Select (Active)' : 'Box Select'}</span>
         </button>
 
@@ -112,11 +117,27 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <button
           id="toolbar-select-all-btn"
           onClick={onSelectAllDevices}
-          className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
+          className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-panel hover:bg-overlay text-ink-soft border border-line transition-colors cursor-pointer"
           title="Select all devices on canvas"
         >
-          <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
+          <CheckSquare className="w-3.5 h-3.5 text-accent" />
           <span>Select All</span>
+        </button>
+
+        {/* Send Topology to AI Button */}
+        <button
+          id="toolbar-send-topology-btn"
+          onClick={onSendTopology}
+          disabled={isAiAnalyzing}
+          className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+            isAiAnalyzing
+              ? 'bg-ai/80 text-ink cursor-wait'
+              : 'bg-gradient-to-r from-ai to-info hover:from-ai hover:to-info text-ink shadow-md shadow-black/40'
+          }`}
+          title="Send topology to AI engine for route analysis"
+        >
+          <Brain className="w-3.5 h-3.5" />
+          <span>{isAiAnalyzing ? 'Analyzing...' : 'Send Topology'}</span>
         </button>
 
         {/* Send Packet Button */}
@@ -126,8 +147,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           disabled={isSimulating}
           className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
             isSimulating
-              ? 'bg-amber-600/80 text-white cursor-wait'
-              : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-950/40'
+              ? 'bg-warn-soft/80 text-accent-ink cursor-wait'
+              : 'bg-gradient-to-r from-ok to-info hover:from-ok hover:to-info text-accent-ink shadow-md shadow-black/40'
           }`}
           title="Choose Source and Target to transmit glowing data frames"
         >
@@ -135,7 +156,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span>{isSimulating ? 'Simulating...' : 'Send Packet'}</span>
         </button>
 
-        <div className="h-5 w-px bg-slate-800 mx-1" />
+        <div className="h-5 w-px bg-panel mx-1" />
 
         {/* Delete Selected / Delete All Button */}
         <button
@@ -144,8 +165,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           disabled={!hasSelection}
           className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
             hasSelection
-              ? 'bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-700 shadow-sm cursor-pointer'
-              : 'bg-slate-800/40 text-slate-600 border border-slate-800 cursor-not-allowed'
+              ? 'bg-bad-soft/80 hover:bg-bad-soft text-bad border border-bad shadow-sm cursor-pointer'
+              : 'bg-panel/40 text-ink-faint border border-line cursor-not-allowed'
           }`}
           title={
             selectedCount > 1
@@ -157,31 +178,31 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span>{selectedCount > 1 ? `Delete Selected (${selectedCount})` : 'Delete'}</span>
         </button>
 
-        <div className="h-5 w-px bg-slate-800 mx-1" />
+        <div className="h-5 w-px bg-panel mx-1" />
 
         {/* Presets Dropdown */}
         <div className="relative">
           <button
             id="toolbar-presets-dropdown-btn"
             onClick={() => setShowPresetsMenu(!showPresetsMenu)}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-panel hover:bg-overlay text-ink-soft border border-line transition-colors cursor-pointer"
           >
-            <Network className="w-3.5 h-3.5 text-cyan-400" />
+            <Network className="w-3.5 h-3.5 text-accent" />
             <span>Topologies</span>
-            <ChevronDown className="w-3 h-3 text-slate-400" />
+            <ChevronDown className="w-3 h-3 text-ink-muted" />
           </button>
 
           {showPresetsMenu && (
             <div
               id="presets-dropdown-menu"
-              className="absolute left-0 mt-1 w-44 bg-slate-900 border border-slate-700 rounded-xl shadow-xl py-1 z-30 font-medium text-xs text-slate-200"
+              className="absolute left-0 mt-1 w-44 bg-panel border border-line rounded-xl shadow-xl py-1 z-30 font-medium text-xs text-ink"
             >
               <button
                 onClick={() => {
                   onSelectPreset('default');
                   setShowPresetsMenu(false);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-cyan-950/60 hover:text-cyan-300 transition-colors"
+                className="w-full text-left px-3 py-1.5 hover:bg-accent-soft/60 hover:text-accent transition-colors"
               >
                 Default Enterprise
               </button>
@@ -190,7 +211,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   onSelectPreset('star');
                   setShowPresetsMenu(false);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-cyan-950/60 hover:text-cyan-300 transition-colors"
+                className="w-full text-left px-3 py-1.5 hover:bg-accent-soft/60 hover:text-accent transition-colors"
               >
                 Star Topology
               </button>
@@ -199,7 +220,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   onSelectPreset('mesh');
                   setShowPresetsMenu(false);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-cyan-950/60 hover:text-cyan-300 transition-colors"
+                className="w-full text-left px-3 py-1.5 hover:bg-accent-soft/60 hover:text-accent transition-colors"
               >
                 Mesh Topology
               </button>
@@ -208,7 +229,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   onSelectPreset('tree');
                   setShowPresetsMenu(false);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-cyan-950/60 hover:text-cyan-300 transition-colors"
+                className="w-full text-left px-3 py-1.5 hover:bg-accent-soft/60 hover:text-accent transition-colors"
               >
                 Tree Topology
               </button>
@@ -217,7 +238,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   onSelectPreset('bus');
                   setShowPresetsMenu(false);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-cyan-950/60 hover:text-cyan-300 transition-colors"
+                className="w-full text-left px-3 py-1.5 hover:bg-accent-soft/60 hover:text-accent transition-colors"
               >
                 Bus Topology
               </button>
@@ -226,7 +247,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   onSelectPreset('ring');
                   setShowPresetsMenu(false);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-cyan-950/60 hover:text-cyan-300 transition-colors"
+                className="w-full text-left px-3 py-1.5 hover:bg-accent-soft/60 hover:text-accent transition-colors"
               >
                 Ring Topology
               </button>
@@ -240,27 +261,27 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <button
           id="toolbar-save-btn"
           onClick={onSaveTopology}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-panel hover:bg-overlay text-ink-soft border border-line transition-colors"
           title="Save topology state to localStorage"
         >
-          <Save className="w-3.5 h-3.5 text-cyan-400" />
+          <Save className="w-3.5 h-3.5 text-accent" />
           <span>Save</span>
         </button>
 
         <button
           id="toolbar-load-btn"
           onClick={onLoadTopology}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-panel hover:bg-overlay text-ink-soft border border-line transition-colors"
           title="Restore saved topology"
         >
-          <FolderOpen className="w-3.5 h-3.5 text-cyan-400" />
+          <FolderOpen className="w-3.5 h-3.5 text-accent" />
           <span>Load</span>
         </button>
 
         <button
           id="toolbar-reset-btn"
           onClick={onResetCanvas}
-          className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+          className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-ink-muted hover:text-ink hover:bg-raised transition-colors"
           title="Clear canvas"
         >
           <RotateCcw className="w-3.5 h-3.5" />

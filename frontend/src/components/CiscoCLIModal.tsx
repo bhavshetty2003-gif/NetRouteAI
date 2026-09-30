@@ -534,31 +534,31 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
   return (
     <div
       id="cisco-cli-modal-overlay"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-base/70 backdrop-blur-xs p-4"
     >
       <div
         id="cisco-cli-terminal-window"
-        className={`flex flex-col bg-slate-950 border border-cyan-500/40 rounded-xl shadow-2xl overflow-hidden transition-all duration-200 ${
+        className={`flex flex-col bg-panel border border-accent/40 rounded-xl shadow-2xl overflow-hidden transition-all duration-200 ${
           isMaximized ? 'w-[96vw] h-[92vh]' : 'w-full max-w-4xl h-[650px]'
         }`}
       >
         {/* Terminal Header */}
         <div
           id="cisco-cli-header"
-          className="flex items-center justify-between px-4 py-2.5 bg-slate-900 border-b border-slate-800 select-none"
+          className="flex items-center justify-between px-4 py-2.5 bg-panel border-b border-line select-none"
         >
           <div className="flex items-center space-x-2.5">
-            <div className="p-1.5 rounded-lg bg-cyan-950 text-cyan-400 border border-cyan-800/60">
+            <div className="p-1.5 rounded-lg bg-accent-soft text-accent border border-accent/60">
               <Terminal className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="text-sm font-semibold text-slate-100">{device.name}</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-cyan-400 font-mono">
+                <span className="text-sm font-semibold text-ink">{device.name}</span>
+                <span className="text-xs px-2 py-0.5 rounded bg-panel text-accent font-mono">
                   {device.model} - Cisco IOS CLI
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 font-mono">
+              <p className="text-[11px] text-ink-muted font-mono">
                 Port Console: Serial0 | IP: {device.ipAddress}
               </p>
             </div>
@@ -569,21 +569,21 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
               id="cisco-cli-clear-btn"
               onClick={() => setLines([])}
               title="Clear terminal"
-              className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
+              className="p-1.5 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
             >
               <Trash2 className="w-4 h-4" />
             </button>
             <button
               id="cisco-cli-maximize-btn"
               onClick={() => setIsMaximized(!isMaximized)}
-              className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
+              className="p-1.5 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
             >
               {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
             <button
               id="cisco-cli-close-btn"
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
+              className="p-1.5 text-ink-muted hover:text-bad hover:bg-raised rounded transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
@@ -594,19 +594,19 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
         <div
           id="cisco-cli-output"
           onClick={() => inputRef.current?.focus()}
-          className="flex-1 p-4 font-mono text-xs sm:text-sm overflow-y-auto bg-[#030712] text-slate-200 space-y-1 select-text leading-relaxed"
+          className="flex-1 p-4 font-mono text-xs sm:text-sm overflow-y-auto bg-[#030712] text-ink space-y-1 select-text leading-relaxed"
         >
           {lines.map((line, idx) => (
             <div
               key={idx}
               className={`whitespace-pre-wrap ${
                 line.type === 'prompt'
-                  ? 'text-cyan-300 font-semibold'
+                  ? 'text-accent font-semibold'
                   : line.type === 'error'
-                  ? 'text-red-400'
+                  ? 'text-bad'
                   : line.type === 'success'
-                  ? 'text-emerald-400'
-                  : 'text-slate-300'
+                  ? 'text-ok'
+                  : 'text-ink-soft'
               }`}
             >
               {line.text}
@@ -615,7 +615,7 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
 
           {/* Active Input Line */}
           <div className="flex items-center space-x-2 pt-1">
-            <span className="text-cyan-400 font-bold whitespace-nowrap font-mono">{getPrompt()}</span>
+            <span className="text-accent font-bold whitespace-nowrap font-mono">{getPrompt()}</span>
             <input
               ref={inputRef}
               id="cisco-cli-active-input"
@@ -626,7 +626,7 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
               autoFocus
               spellCheck={false}
               autoComplete="off"
-              className="flex-1 bg-transparent text-emerald-300 outline-none border-none font-mono text-xs sm:text-sm p-0 m-0 caret-cyan-400"
+              className="flex-1 bg-transparent text-ok outline-none border-none font-mono text-xs sm:text-sm p-0 m-0 caret-accent"
             />
           </div>
           <div ref={bottomRef} />
@@ -635,42 +635,42 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
         {/* Quick Helper Bar */}
         <div
           id="cisco-cli-quick-bar"
-          className="flex items-center justify-between px-4 py-2 bg-slate-900/90 border-t border-slate-800 text-xs text-slate-400 font-mono"
+          className="flex items-center justify-between px-4 py-2 bg-panel/90 border-t border-line text-xs text-ink-muted font-mono"
         >
           <div className="flex items-center space-x-2 overflow-x-auto">
-            <span className="text-slate-500">Quick:</span>
+            <span className="text-accent-ink">Quick:</span>
             <button
               onClick={() => executeCommand('enable')}
-              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 transition-colors"
+              className="px-2 py-0.5 rounded bg-panel hover:bg-overlay text-accent transition-colors"
             >
               enable
             </button>
             <button
               onClick={() => executeCommand('conf t')}
-              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 transition-colors"
+              className="px-2 py-0.5 rounded bg-panel hover:bg-overlay text-accent transition-colors"
             >
               conf t
             </button>
             <button
               onClick={() => executeCommand('show ip int brief')}
-              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 transition-colors"
+              className="px-2 py-0.5 rounded bg-panel hover:bg-overlay text-accent transition-colors"
             >
               sh ip int br
             </button>
             <button
               onClick={() => executeCommand('show running-config')}
-              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 transition-colors"
+              className="px-2 py-0.5 rounded bg-panel hover:bg-overlay text-accent transition-colors"
             >
               sh run
             </button>
             <button
               onClick={() => executeCommand('show version')}
-              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 transition-colors"
+              className="px-2 py-0.5 rounded bg-panel hover:bg-overlay text-accent transition-colors"
             >
               sh ver
             </button>
           </div>
-          <div className="hidden sm:flex items-center space-x-2 text-[11px] text-slate-500">
+          <div className="hidden sm:flex items-center space-x-2 text-[11px] text-accent-ink">
             <span>↑↓ History</span>
             <span>•</span>
             <span>'?' for Help</span>

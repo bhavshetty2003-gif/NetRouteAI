@@ -17,32 +17,26 @@ def get_routers():
         
 
     return routers
+
+
+client = docker.from_env()
+
 def get_links():
     links = []
 
     for network in client.networks.list():
-        network.reload()   # Refresh network details
-
         containers = network.attrs.get("Containers", {})
 
-        if len(containers) < 2:
-            continue
+        if len(containers) == 2:
+            names = []
 
-        names = []
+            for c in containers.values():
+                names.append(c["Name"])
 
-        for cid in containers:
-            try:
-                names.append(client.containers.get(cid).name)
-            except:
-                pass
-
-        # Create a link between every pair of containers
-        for i in range(len(names)):
-            for j in range(i + 1, len(names)):
-                links.append({
-                    "source": names[i],
-                    "target": names[j],
-                    "network": network.name
-                })
+            links.append({
+                "source": names[0],
+                "target": names[1],
+                "network": network.name
+            })
 
     return links

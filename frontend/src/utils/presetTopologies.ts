@@ -74,6 +74,7 @@ export function getDefaultTopology(): { devices: NetworkDevice[]; cables: Networ
     model: 'Generic Workstation',
     iosVersion: 'NetOS 11.4 Workstation Edition',
     uptime: '14 days, 6 hours',
+    status: 'running',
     cliConfig: {
       hostname: 'PC1',
       history: ['ipconfig', 'ping 192.168.20.10'],
@@ -131,6 +132,7 @@ export function getDefaultTopology(): { devices: NetworkDevice[]; cables: Networ
     model: 'Cisco Catalyst 2960-24TT',
     iosVersion: 'Cisco IOS 15.0(2)SE4 C2960-LANBASEK9-M',
     uptime: '42 days, 18 hours',
+    status: 'running',
     cliConfig: {
       hostname: 'SW1',
       history: ['enable', 'show vlan brief'],
@@ -175,6 +177,7 @@ export function getDefaultTopology(): { devices: NetworkDevice[]; cables: Networ
     model: 'Cisco 2911 Integrated Services Router',
     iosVersion: 'Cisco IOS Software, C2900 Software (C2900-UNIVERSALK9-M), Version 15.5(3)M4b',
     uptime: '109 days, 4 hours',
+    status: 'running',
     cliConfig: {
       hostname: 'R1',
       history: ['enable', 'configure terminal', 'show ip route'],
@@ -219,6 +222,7 @@ export function getDefaultTopology(): { devices: NetworkDevice[]; cables: Networ
     model: 'Cisco 2911 Integrated Services Router',
     iosVersion: 'Cisco IOS Software, C2900 Software (C2900-UNIVERSALK9-M), Version 15.5(3)M4b',
     uptime: '109 days, 4 hours',
+    status: 'running',
     cliConfig: {
       hostname: 'R2',
       history: ['enable', 'show ip interface brief'],
@@ -276,6 +280,7 @@ export function getDefaultTopology(): { devices: NetworkDevice[]; cables: Networ
     model: 'Cisco Catalyst 2960-24TT',
     iosVersion: 'Cisco IOS 15.0(2)SE4',
     uptime: '38 days, 12 hours',
+    status: 'running',
     cliConfig: {
       hostname: 'SW2',
       history: ['enable', 'show interfaces status'],
@@ -306,6 +311,7 @@ export function getDefaultTopology(): { devices: NetworkDevice[]; cables: Networ
     model: 'Generic Workstation',
     iosVersion: 'NetOS 11.4 Workstation Edition',
     uptime: '5 days, 2 hours',
+    status: 'running',
     cliConfig: {
       hostname: 'PC2',
       history: ['ipconfig', 'ping 192.168.10.10'],
@@ -393,6 +399,7 @@ export function getStarTopology(): { devices: NetworkDevice[]; cables: NetworkCa
     model: 'Cisco Catalyst 2960',
     iosVersion: '15.0(2)SE4',
     uptime: '60 days',
+    status: 'running',
     cliConfig: { hostname: 'SW1-Core', history: ['enable'] },
   };
 
@@ -428,6 +435,7 @@ export function getStarTopology(): { devices: NetworkDevice[]; cables: NetworkCa
       model: cfg.type === 'router' ? 'Cisco 2901' : 'Workstation Node',
       iosVersion: cfg.type === 'router' ? '15.4(3)M' : 'NetOS 11',
       uptime: '12 days',
+    status: 'running',
       cliConfig: { hostname: cfg.name, history: ['enable'] },
     };
 
@@ -487,6 +495,7 @@ export function getMeshTopology(): { devices: NetworkDevice[]; cables: NetworkCa
     model: 'Cisco 2911 ISR',
     iosVersion: '15.5(3)M',
     uptime: '99 days',
+    status: 'running',
     cliConfig: { hostname: r.id, history: ['enable', 'show ip route'] },
   }));
 
@@ -554,6 +563,7 @@ export function getRingTopology(): { devices: NetworkDevice[]; cables: NetworkCa
       model: 'Cisco 2901',
       iosVersion: '15.4(3)M',
       uptime: '30 days',
+    status: 'running',
       cliConfig: { hostname: id, history: ['enable'] },
     });
   }
@@ -605,6 +615,7 @@ export function getTreeTopology(): { devices: NetworkDevice[]; cables: NetworkCa
     model: 'Cisco 3945 ISR',
     iosVersion: '15.5(3)M',
     uptime: '180 days',
+    status: 'running',
     cliConfig: { hostname: 'Core-Router', history: ['enable'] },
   };
 
@@ -623,6 +634,7 @@ export function getTreeTopology(): { devices: NetworkDevice[]; cables: NetworkCa
     model: 'Catalyst 3650',
     iosVersion: '16.3.3',
     uptime: '45 days',
+    status: 'running',
     cliConfig: { hostname: 'Dist-SW1', history: ['enable'] },
   };
 
@@ -640,6 +652,7 @@ export function getTreeTopology(): { devices: NetworkDevice[]; cables: NetworkCa
     model: 'Catalyst 3650',
     iosVersion: '16.3.3',
     uptime: '45 days',
+    status: 'running',
     cliConfig: { hostname: 'Dist-SW2', history: ['enable'] },
   };
 
@@ -706,6 +719,7 @@ export function getTreeTopology(): { devices: NetworkDevice[]; cables: NetworkCa
       model: 'Enterprise PC',
       iosVersion: 'NetOS 11',
       uptime: '8 days',
+    status: 'running',
       cliConfig: { hostname: cfg.name, history: ['ipconfig'] },
     };
 
@@ -761,6 +775,7 @@ export function getBusTopology(): { devices: NetworkDevice[]; cables: NetworkCab
       model: 'Cisco 2960',
       iosVersion: '15.0',
       uptime: '15 days',
+    status: 'running',
       cliConfig: { hostname: swId, history: ['enable'] },
     };
 
@@ -789,6 +804,7 @@ export function getBusTopology(): { devices: NetworkDevice[]; cables: NetworkCab
       model: 'Workstation',
       iosVersion: 'NetOS 11',
       uptime: '6 days',
+    status: 'running',
       cliConfig: { hostname: pcId, history: ['ipconfig'] },
     };
 
