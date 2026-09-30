@@ -449,11 +449,11 @@ def compare_ospf_vs_ai(
     convergence_link: dict[str, str] | None = None,
     method: str = "ospf",
 ) -> dict[str, Any]:
-    """Measure every routing method over the live lab and compare them.
+    """Measure OSPF and the Random Forest path over the live lab and compare them.
 
-    `method` selects which path the page treats as the active route. All three
-    are always measured so the selection changes what is compared rather than
-    hiding the alternatives.
+    `method` selects which path the page treats as the active route. Both are
+    always measured so the selection changes what is compared rather than
+    hiding the alternative.
     """
     lab = discover_lab()
     if not lab["online"]:
@@ -476,7 +476,7 @@ def compare_ospf_vs_ai(
     # 1. Each router's OSPF RIB: what OSPF itself decides, unaffected by any
     #    static route in effect.
     # 2. traceroute: what the network is actually forwarding right now.
-    # 3. Modelled Dijkstra over live interface costs, as a last resort.
+    # 3. Modelled shortest path over live interface costs, as a last resort.
     #
     # (2) is what the previous implementation used on its own, which is wrong
     # once the lab is steered: a static route makes traceroute report the AI
@@ -495,7 +495,7 @@ def compare_ospf_vs_ai(
     else:
         ospf = modelled
         ospf_basis = (
-            "Modelled Dijkstra on live interface cost (traceroute hop unattributable)"
+            "Modelled shortest path on live interface cost (traceroute hop unattributable)"
         )
     if not ospf:
         raise LabUnavailable(f"No OSPF path between {source} and {destination}")
@@ -508,14 +508,6 @@ def compare_ospf_vs_ai(
         raise LabUnavailable(ranked["error"])
     ai = ranked["best"]["path"]
     ai_measurements = _measure_path_hops(ai, lab)
-
-    # --- Shortest-path (Dijkstra) route: the textbook SPF baseline ---
-    dijkstra = ospf_path(G, source, destination) or ospf
-    dijkstra_measurements = (
-        ospf_measurements
-        if dijkstra == ospf
-        else _measure_path_hops(dijkstra, lab)
-    )
 
     # --- End-to-end measurement from the real source container ---
     end_to_end = measure_path(source, destination, count=6)
@@ -541,17 +533,9 @@ def compare_ospf_vs_ai(
             "Random Forest congestion-aware selection (modelled graph)",
             [],
         ),
-        "dijkstra": _route_report(
-            dijkstra,
-            dijkstra_measurements,
-            G,
-            lab,
-            "Dijkstra shortest path on live interface cost (modelled graph)",
-            [],
-        ),
         "path_taken": walked,
-        "path_taken_matches": _matches_method(walked, ospf, ai, dijkstra),
-        "forwarding_method": _forwarding_method(walked, ospf, ai, dijkstra),
+        "path_taken_matches": _matches_method(walked, ospf, ai),
+        "forwarding_method": _forwarding_method(walked, ospf, ai),
         "end_to_end": {
             "latency_ms": end_to_end["latency_ms"],
             "rtt_min_ms": end_to_end["rtt_min_ms"],
@@ -585,7 +569,7 @@ def compare_ospf_vs_ai(
     }
 
     result["active"] = _active_method(
-        method, ospf, ai, dijkstra, walked, lab, source, destination
+        method, ospf, ai, walked, lab, source, destination
     )
     result["comparison"] = _build_comparison(result)
 
@@ -604,8 +588,8 @@ def compare_ospf_vs_ai(
     return result
 
 
-def _method_paths(ospf: list[str], ai: list[str], dijkstra: list[str]) -> dict[str, list[str]]:
-    return {"ospf": ospf, "ai": ai, "dijkstra": dijkstra}
+def _method_paths(ospf: list[str], ai: list[str]) -> dict[str, list[str]]:
+    return {"ospf": ospf, "ai": ai}
 
 
 # One line of `show ip route ospf`, e.g.
@@ -739,17 +723,17 @@ def ospf_rib_path(lab: dict[str, Any], source: str, destination: str) -> list[st
 
 
 def _forwarding_method(
-    walked: list[str], ospf: list[str], ai: list[str], dijkstra: list[str]
+    walked: list[str], ospf: list[str], ai: list[str]
 ) -> str | None:
     """Which single method the walked path corresponds to, if any does.
 
-    The AI and Dijkstra paths are frequently identical, so this returns the
-    first match in a fixed order and the UI labels it as ambiguous rather than
+    The AI and OSPF paths can be identical on a simple pair, so this returns the
+    first match in a fixed order and the UI labels it by the match rather than
     pretending the distinction is meaningful.
     """
     if not walked:
         return None
-    for name, path in _method_paths(ospf, ai, dijkstra).items():
+    for name, path in _method_paths(ospf, ai).items():
         if path and walked == path:
             return name
     return None
@@ -767,7 +751,7 @@ def path_for_method(lab: dict[str, Any], method: str, source: str, destination: 
         if "error" in ranked:
             raise LabUnavailable(ranked["error"])
         return ranked["best"]["path"]
-    if method in ("ospf", "dijkstra"):
+    if method == "ospf":
         return ospf_path(G, source, destination) or []
     raise LabUnavailable(
         f"Unknown routing method '{method}'. Use one of: {', '.join(ROUTING_METHODS)}"
@@ -778,7 +762,6 @@ def _matches_method(
     walked: list[str],
     ospf: list[str],
     ai: list[str],
-    dijkstra: list[str],
 ) -> dict[str, bool]:
     """Which methods the traced forwarding path actually agrees with.
 
@@ -788,7 +771,7 @@ def _matches_method(
     """
     return {
         name: bool(walked and path and walked == path)
-        for name, path in _method_paths(ospf, ai, dijkstra).items()
+        for name, path in _method_paths(ospf, ai).items()
     }
 
 
@@ -796,7 +779,6 @@ def _active_method(
     method: str,
     ospf: list[str],
     ai: list[str],
-    dijkstra: list[str],
     walked: list[str],
     lab: dict[str, Any],
     source: str,
@@ -808,12 +790,11 @@ def _active_method(
     so "AI is selected" and "the lab is actually forwarding the AI path" are
     different claims. Both are reported here rather than conflated.
     """
-    paths = _method_paths(ospf, ai, dijkstra)
+    paths = _method_paths(ospf, ai)
     path = paths[method]
     labels = {
         "ospf": "OSPF (live forwarding)",
         "ai": "AI / Random Forest selection",
-        "dijkstra": "Shortest path (Dijkstra)",
     }
     in_effect = bool(walked and path and walked == path)
     steer = steer_plan(method, path, lab, source, destination)
@@ -942,9 +923,12 @@ def _first_transit_link(path: list[str], lab: dict) -> dict[str, str] | None:
 # --------------------------------------------------------------------------- #
 
 # Routing methods the UI can select. `ospf` is the ground truth: it is whatever
-# FRR forwards with nothing injected. The other two are paths the lab can be
-# steered onto with a static route (see route_steer.py).
-ROUTING_METHODS = ("ospf", "ai", "dijkstra")
+# FRR forwards with nothing injected. `ai` is a path the lab can be steered onto
+# with a static route (see route_steer.py). A textbook Dijkstra path was offered
+# here as a third option and removed: it is a modelled baseline rather than a
+# method the routers can be asked to run, and it duplicated the AI path often
+# enough to be an unhelpful third column.
+ROUTING_METHODS = ("ospf", "ai")
 
 
 def resolve_traced_hops(

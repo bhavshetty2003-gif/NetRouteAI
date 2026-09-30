@@ -47,14 +47,8 @@ import {
   setRoutingMethod,
   setTraffic,
 } from '../../utils/api';
+import { NetworkDevice } from '../../types/network';
 
-/**
- * Live telemetry for the running Docker/FRR lab.
- *
- * Deliberately takes no props: every value here is measured from the lab over
- * the API, not derived from the drawn canvas, so the designer state and the
- * measurements cannot drift apart.
- */
 /** Format a millisecond figure without pretending to more precision than a
  *  lab container can deliver. Sub-millisecond hops are normal on a /29 link. */
 function ms(value: number | null | undefined, digits = 3): string {
@@ -87,11 +81,6 @@ const METHODS: Array<{ key: RoutingMethod; label: string; hint: string }> = [
     label: 'AI / Random Forest',
     hint: 'model-ranked best path',
   },
-  {
-    key: 'dijkstra',
-    label: 'Shortest path (Dijkstra)',
-    hint: 'textbook SPF baseline',
-  },
 ];
 
 function PathChain({ path, highlight }: { path: string[]; highlight: string }) {
@@ -118,7 +107,17 @@ function PathChain({ path, highlight }: { path: string[]; highlight: string }) {
   );
 }
 
-export const AnalyticsView: React.FC = () => {
+/**
+ * Live telemetry for the running Docker/FRR lab, scoped to the drawn topology.
+ *
+ * The routers offered as endpoints are the ones present in *both* the topology
+ * on the canvas and the running lab: a router that only exists on the canvas
+ * has nothing to measure, and one that only exists in the lab is not part of
+ * the network the user is looking at. Everything measured still comes from the
+ * lab over the API; the topology only decides what may be selected. With no
+ * routers on the canvas the page shows nothing rather than lab-wide figures.
+ */
+export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices }) => {
   const [lab, setLab] = useState<LabStatus | null>(null);
   const [labError, setLabError] = useState<string | null>(null);
   const [dataset, setDataset] = useState<DatasetStats | null>(null);
@@ -126,8 +125,8 @@ export const AnalyticsView: React.FC = () => {
   const [throughput, setThroughput] = useState<BandwidthResult | null>(null);
   const [convergence, setConvergence] = useState<ConvergenceResult | null>(null);
 
-  const [source, setSource] = useState('R1');
-  const [destination, setDestination] = useState('R11');
+  const [source, setSource] = useState('');
+  const [destination, setDestination] = useState('');
   const [includeConvergence, setIncludeConvergence] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [method, setMethod] = useState<RoutingMethod>('ospf');
@@ -139,9 +138,27 @@ export const AnalyticsView: React.FC = () => {
   const [steering, setSteering] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
+  // Routers drawn on the canvas. This is what scopes the page: with none, there
+  // is no topology to report on and the lab's own figures are not shown.
+  const topologyRouters = useMemo(
+    () => devices.filter((d) => d.type === 'router'),
+    [devices]
+  );
+  const hasTopologyRouters = topologyRouters.length > 0;
+  const topologyRouterIds = useMemo(
+    () => new Set(topologyRouters.map((d) => d.id)),
+    [topologyRouters]
+  );
+
+  // Endpoints are the routers that exist in the live lab *and* on the canvas:
+  // a canvas-only router has nothing to measure, and a lab-only router is not
+  // part of the network the user is looking at.
   const routerIds = useMemo(
-    () => lab?.devices.filter((d) => d.type === 'router').map((d) => d.id) ?? [],
-    [lab]
+    () =>
+      lab?.devices
+        .filter((d) => d.type === 'router' && topologyRouterIds.has(d.id))
+        .map((d) => d.id) ?? [],
+    [lab, topologyRouterIds]
   );
 
   /** Load lab topology + dataset facts. Safe to call repeatedly. */
@@ -150,14 +167,22 @@ export const AnalyticsView: React.FC = () => {
       const status = await getLabStatus();
       setLab(status);
       setLabError(null);
-      setReachedLab(true);
     } catch (error) {
       setLab(null);
       setLabError(error instanceof Error ? error.message : String(error));
+    } finally {
+      // Settle the loading state on failure too, otherwise an unreachable
+      // backend leaves the page spinning forever instead of showing the error
+      // and the retry button.
+      setReachedLab(true);
     }
   }, []);
 
   useEffect(() => {
+    // Nothing to measure with no routers on the canvas, and the reachability
+    // sweep is expensive (a ping per pair over the whole device matrix), so it
+    // is not run at all in that state.
+    if (!hasTopologyRouters) return;
     loadLab();
     getDatasetStats()
       .then(setDataset)
@@ -177,19 +202,22 @@ export const AnalyticsView: React.FC = () => {
         setReachability(map);
       })
       .catch(() => setReachability({}));
-  }, [loadLab]);
+  }, [loadLab, hasTopologyRouters]);
 
-  // Keep the destination valid whenever the discovered device list changes.
+  // Keep the source and destination valid whenever the selectable set changes
+  // (a topology edit, a lab restart, or a different pair of overlapping
+  // routers). Both must name distinct routers or there is nothing to measure.
   useEffect(() => {
     if (routerIds.length === 0) return;
-    if (!routerIds.includes(source)) setSource(routerIds[0]);
-    if (!routerIds.includes(destination)) {
-      setDestination(routerIds.find((id) => id !== source) ?? routerIds[0]);
+    const nextSource = routerIds.includes(source) ? source : routerIds[0];
+    if (nextSource !== source) setSource(nextSource);
+    if (!routerIds.includes(destination) || destination === nextSource) {
+      setDestination(routerIds.find((id) => id !== nextSource) ?? nextSource);
     }
   }, [routerIds, source, destination]);
 
   const run = useCallback(async () => {
-    if (!lab?.online) return;
+    if (!lab?.online || !source || !destination || source === destination) return;
     setBusy(true);
     setRunError(null);
     try {
@@ -228,9 +256,9 @@ export const AnalyticsView: React.FC = () => {
   // Measure whenever the pair or the selected method changes, so the panel always
   // describes what the lab is being asked to do right now.
   useEffect(() => {
-    if (lab?.online && source !== destination) run();
+    if (hasTopologyRouters && lab?.online && source && source !== destination) run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lab?.online, source, destination, method]);
+  }, [hasTopologyRouters, lab?.online, source, destination, method]);
 
   // Throughput is a separate probe: it drives real traffic and samples the
   // interface byte counters, so it is not folded into the comparison call.
@@ -257,24 +285,24 @@ export const AnalyticsView: React.FC = () => {
   }, [lab, source, destination]);
 
   useEffect(() => {
-    if (!lab?.online) return;
+    if (!hasTopologyRouters || !lab?.online) return;
     runThroughput();
-  }, [lab?.online, source, runThroughput]);
+  }, [hasTopologyRouters, lab?.online, source, runThroughput]);
 
   // Refresh once a minute so the path chain, interface counters and the
   // trained-model figures stay current instead of freezing at page load.
   useEffect(() => {
-    if (!lab?.online) return;
+    if (!hasTopologyRouters || !lab?.online) return;
     const timer = setInterval(run, 60000);
     return () => clearInterval(timer);
-  }, [lab?.online, run]);
+  }, [hasTopologyRouters, lab?.online, run]);
 
   // Auto refresh on top of that, for watching an impairment take effect.
   useEffect(() => {
-    if (!autoRefresh || !lab?.online) return;
+    if (!autoRefresh || !hasTopologyRouters || !lab?.online) return;
     const timer = setInterval(run, 15000);
     return () => clearInterval(timer);
-  }, [autoRefresh, lab?.online, run]);
+  }, [autoRefresh, hasTopologyRouters, lab?.online, run]);
 
   /** Front-to-front latency samples, so the trend is visible rather than implied. */
   const history = useRef<Array<{ at: number; latency: number | null }>>([]);
@@ -303,9 +331,7 @@ export const AnalyticsView: React.FC = () => {
   const walked = live?.path_taken ?? [];
   const tracedHops = e2e?.hops ?? [];
 
-  const activeReport: RouteReport | undefined = live
-    ? live[method === 'dijkstra' ? 'dijkstra' : method]
-    : undefined;
+  const activeReport: RouteReport | undefined = live ? live[method] : undefined;
 
   const ospfLinks = activeReport?.links ?? [];
 
@@ -325,6 +351,31 @@ export const AnalyticsView: React.FC = () => {
   const pathBandwidth = activeReport?.computed.bandwidth ?? null;
 
   // ---------------------------------------------------------------- render
+
+  if (!hasTopologyRouters) {
+    return (
+      <div id="analytics-view-root" className="flex-1 h-full bg-base overflow-y-auto p-8">
+        <div className="max-w-2xl mx-auto mt-16 card p-8 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-xl bg-warn-soft border border-warn text-warn">
+              <Layers className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-ink">No topology to analyse</h2>
+              <p className="text-sm text-ink-soft">
+                This page reports on the routers in the topology on the designer
+                canvas. Add one or more routers there, then come back — until then
+                there is nothing to measure.
+              </p>
+            </div>
+          </div>
+          <p className="text-xs font-mono text-ink-muted">
+            No routers are present on the canvas, so the running lab is not shown.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!reachedLab) {
     return (
@@ -369,6 +420,34 @@ export const AnalyticsView: React.FC = () => {
     );
   }
 
+  // The lab is up, but none of the canvas routers are in it. Saying so beats
+  // silently listing lab routers the user never drew.
+  if (routerIds.length === 0) {
+    const labRouters = lab.devices.filter((d) => d.type === 'router').map((d) => d.id);
+    return (
+      <div id="analytics-view-root" className="flex-1 h-full bg-base overflow-y-auto p-8">
+        <div className="max-w-2xl mx-auto mt-16 card p-8 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-xl bg-warn-soft border border-warn text-warn">
+              <Layers className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-ink">No overlapping routers</h2>
+              <p className="text-sm text-ink-soft">
+                None of the routers in the topology are present in the running lab,
+                so there is no measured pair to report.
+              </p>
+            </div>
+          </div>
+          <div className="space-y-1 text-xs font-mono text-ink-muted">
+            <p>On the canvas: {topologyRouters.map((d) => d.id).join(', ')}</p>
+            <p>In the running lab: {labRouters.join(', ') || '—'}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div id="analytics-view-root" className="flex-1 h-full bg-base overflow-y-auto p-6 space-y-6 select-none">
       {/* ------------------------------------------------------------ header */}
@@ -386,8 +465,9 @@ export const AnalyticsView: React.FC = () => {
               </span>
             </h2>
             <p className="text-sm text-ink-soft mt-0.5">
-              {lab.device_count} devices &middot; {lab.transit_links} transit links &middot;{' '}
-              {lab.lan_links} LAN links &middot; every figure below is measured, not modelled
+              {routerIds.length} of {topologyRouters.length} topology router
+              {topologyRouters.length === 1 ? '' : 's'} present in the live lab &middot;{' '}
+              every figure below is measured, not modelled
             </p>
           </div>
         </div>
@@ -462,7 +542,7 @@ export const AnalyticsView: React.FC = () => {
             <div>
               <h3 className="text-sm font-bold text-ink">Routing method</h3>
               <p className="text-[11px] text-ink-muted font-mono">
-                All three are measured below; this selects which one the lab is asked to forward.
+                Both are measured below; this selects which one the lab is asked to forward.
               </p>
             </div>
           </div>
@@ -655,9 +735,9 @@ export const AnalyticsView: React.FC = () => {
                     {m.label}
                   </span>
                 ))}
-                {live.path_taken_matches?.ai && live.path_taken_matches?.dijkstra && (
+                {live.path_taken_matches?.ai && (
                   <span className="text-[10px] font-mono text-ink-muted">
-                    AI and Dijkstra produced the same path here, so the routers
+                    AI and OSPF produced the same path here, so the routers
                     cannot be forwarding one rather than the other.
                   </span>
                 )}
@@ -782,7 +862,7 @@ export const AnalyticsView: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <RouteCard
                 title="OSPF (what the routers forward)"
                 tone="warn"
@@ -799,14 +879,6 @@ export const AnalyticsView: React.FC = () => {
                 confidence={live.confidence}
                 selected={method === 'ai'}
                 forwarding={live.path_taken_matches?.ai === true}
-              />
-              <RouteCard
-                title="Shortest path (Dijkstra)"
-                tone="info"
-                report={live.dijkstra}
-                segments={live.dijkstra.segments}
-                selected={method === 'dijkstra'}
-                forwarding={live.path_taken_matches?.dijkstra === true}
               />
             </div>
 
@@ -972,7 +1044,7 @@ export const AnalyticsView: React.FC = () => {
       )}
 
       {/* -------------------------------------------------------- OSPF areas */}
-      {lab && <OspfAreas onChanged={run} />}
+      {lab && <OspfAreas routerIds={routerIds} onChanged={run} />}
 
       {/* ------------------------------------------------------ lab controls */}
       {lab && (
@@ -1033,7 +1105,14 @@ export const AnalyticsView: React.FC = () => {
  * Changing an interface's area genuinely re-floods the area, so a change is
  * previewed -- with the pairs it puts at risk -- and only then applied.
  */
-function OspfAreas({ onChanged }: { onChanged: () => void }) {
+function OspfAreas({
+  routerIds,
+  onChanged,
+}: {
+  /** Routers to show: the drawn topology's routers that are present in the lab. */
+  routerIds: string[];
+  onChanged: () => void;
+}) {
   const [inventory, setInventory] = useState<OspfAreaInventory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [device, setDevice] = useState('');
@@ -1060,23 +1139,30 @@ function OspfAreas({ onChanged }: { onChanged: () => void }) {
     load();
   }, [load]);
 
+  // Only the routers this page is scoped to. The inventory is lab-wide, so it
+  // is filtered here rather than shown wholesale.
+  const routers = useMemo(
+    () => inventory?.routers.filter((r) => routerIds.includes(r.device)) ?? [],
+    [inventory, routerIds]
+  );
+
   const router: OspfAreaRouter | null =
-    inventory?.routers.find((r) => r.device === device) ?? null;
+    routers.find((r) => r.device === device) ?? null;
   const selectedIface = router?.interfaces.find((i) => i.interface === iface) ?? null;
 
   // Default the pickers to the first router and its first interface once the
   // inventory arrives, and keep them valid across a reload.
   useEffect(() => {
-    if (!inventory?.routers.length) return;
-    if (!inventory.routers.some((r) => r.device === device)) {
-      setDevice(inventory.routers[0].device);
+    if (!routers.length) return;
+    if (!routers.some((r) => r.device === device)) {
+      setDevice(routers[0].device);
       return;
     }
-    const first = inventory.routers.find((r) => r.device === device);
+    const first = routers.find((r) => r.device === device);
     if (first && !first.interfaces.some((i) => i.interface === iface)) {
       setIface(first.interfaces[0]?.interface ?? '');
     }
-  }, [inventory, device, iface]);
+  }, [routers, device, iface]);
 
   // The suggested target is the first non-backbone area this lab already runs,
   // so the default is a real area rather than an invented one.
@@ -1153,7 +1239,7 @@ function OspfAreas({ onChanged }: { onChanged: () => void }) {
             </tr>
           </thead>
           <tbody>
-            {inventory.routers.map((r) => (
+            {routers.map((r) => (
               <tr key={r.device}>
                 <td className="font-mono text-ink">{r.device}</td>
                 <td>
@@ -1193,7 +1279,7 @@ function OspfAreas({ onChanged }: { onChanged: () => void }) {
                 setResult(null);
               }}
             >
-              {inventory.routers.map((r) => (
+              {routers.map((r) => (
                 <option key={r.device} value={r.device}>{r.device}</option>
               ))}
             </select>

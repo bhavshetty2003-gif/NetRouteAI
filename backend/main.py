@@ -373,7 +373,12 @@ def lab_route(request: RouteSteerRequest):
             ),
         }
 
-    path = path_for_method(lab, request.method, source, destination)
+    try:
+        path = path_for_method(lab, request.method, source, destination)
+    except LabUnavailable as exc:
+        # Report an unsupported method through the same 503 channel as any other
+        # lab failure, rather than letting it escape the handler as a 500.
+        raise _lab_error(exc) from exc
     if not path:
         raise _lab_error(
             LabUnavailable(

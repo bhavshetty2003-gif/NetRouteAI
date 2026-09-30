@@ -343,7 +343,6 @@ export interface LiveAnalytics {
   active_method: RoutingMethod;
   ospf: RouteReport;
   ai: RouteReport;
-  dijkstra: RouteReport;
   /** Which method the routers are really forwarding right now, from the traceroute. */
   forwarding_method: RoutingMethod | null;
   /** Device chain the packet really walked, recovered from traceroute hop IPs. */
@@ -431,7 +430,7 @@ export async function getLabStatus(): Promise<LabStatus> {
   return response.json();
 }
 
-export type RoutingMethod = "ospf" | "ai" | "dijkstra";
+export type RoutingMethod = "ospf" | "ai";
 
 export async function getLiveAnalytics(
   source: string,

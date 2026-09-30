@@ -1298,7 +1298,7 @@ export default function App() {
             </div>
           </div>
         ) : activeTab === 'analytics' ? (
-          <AnalyticsView />
+          <AnalyticsView devices={devices} />
         ) : (
           <MonitoringView
             devices={devices}
