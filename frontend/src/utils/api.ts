@@ -640,6 +640,96 @@ export async function measureBandwidth(
   return response.json();
 }
 
+export interface OspfAreaInterface {
+  interface: string;
+  state: string;
+  /** Integer form. Area 0 is the backbone. */
+  area: number;
+  area_dotted: string;
+  address: string | null;
+  network_type: string | null;
+  cost: number | null;
+  router_id: string | null;
+}
+
+export interface OspfAreaRouter {
+  device: string;
+  container: string;
+  router_id: string | null;
+  interfaces: OspfAreaInterface[];
+  areas: number[];
+  areas_dotted: string[];
+  /** "ABR" when the router holds interfaces in more than one area. */
+  role: string;
+  backbone: boolean;
+  operational: boolean;
+}
+
+export interface OspfAreaInventory {
+  backbone_area: number;
+  backbone_dotted: string;
+  routers: OspfAreaRouter[];
+  areas: number[];
+  areas_dotted: string[];
+  abrs: string[];
+  errors: { device: string; error: string }[];
+}
+
+/** Every OSPF interface's area in the live lab, read from `show ip ospf interface`. */
+export async function getOspfAreas(): Promise<OspfAreaInventory> {
+  const response = await fetch(`${API_BASE}/api/lab/ospf/areas`);
+  if (!response.ok) throw new Error(await describeFailure(response, "OSPF areas"));
+  return response.json();
+}
+
+export interface OspfAreaPreview {
+  preview: true;
+  device: string;
+  interface: string;
+  from_area: number;
+  from_area_dotted: string;
+  to_area: number;
+  to_area_dotted: string;
+  address: string | null;
+  would_become_abr: boolean;
+  was_abr: boolean;
+  at_risk_pairs: { source: string; destination: string; peer: string }[];
+  at_risk_count: number;
+  warning: string;
+}
+
+export interface OspfAreaApplied {
+  preview: false;
+  device: string;
+  interface: string;
+  from_area_dotted: string;
+  to_area_dotted: string;
+  role: string;
+  areas_dotted: string[];
+  adjacent_now: string[];
+  message: string;
+}
+
+/** Preview or apply an interface area change.
+ *
+ *  A preview must be requested before the apply for the same device, interface
+ *  and area; the backend refuses an un-previewed apply so the blast radius
+ *  cannot be skipped. Area 0 is the backbone and is rejected as a target. */
+export async function setOspfArea(
+  device: string,
+  iface: string,
+  area: string,
+  preview: boolean
+): Promise<OspfAreaPreview | OspfAreaApplied> {
+  const response = await fetch(`${API_BASE}/api/lab/ospf/area`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device, interface: iface, area, preview }),
+  });
+  if (!response.ok) throw new Error(await describeFailure(response, "OSPF area"));
+  return response.json();
+}
+
 export interface TrafficGenerator {
   device: string;
   container: string;

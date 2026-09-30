@@ -26,6 +26,10 @@ import {
   DatasetStats,
   LabStatus,
   LiveAnalytics,
+  OspfAreaApplied,
+  OspfAreaInventory,
+  OspfAreaPreview,
+  OspfAreaRouter,
   RouteReport,
   RoutingMethod,
   TrafficGenerator,
@@ -35,9 +39,11 @@ import {
   getLabStatus,
   getLabReachability,
   getLiveAnalytics,
+  getOspfAreas,
   getTraffic,
   measureBandwidth,
   setLinkState,
+  setOspfArea,
   setRoutingMethod,
   setTraffic,
 } from '../../utils/api';
@@ -395,8 +401,8 @@ export const AnalyticsView: React.FC = () => {
               value={source}
               onChange={(e) => setSource(e.target.value)}
             >
-              {lab.devices.map((d) => (
-                <option key={d.id} value={d.id}>{d.id}</option>
+              {routerIds.map((id) => (
+                <option key={id} value={id}>{id}</option>
               ))}
             </select>
           </div>
@@ -409,8 +415,8 @@ export const AnalyticsView: React.FC = () => {
               value={destination}
               onChange={(e) => setDestination(e.target.value)}
             >
-              {lab.devices.map((d) => (
-                <option key={d.id} value={d.id}>{d.id}</option>
+              {routerIds.map((id) => (
+                <option key={id} value={id}>{id}</option>
               ))}
             </select>
             {pairState && (
@@ -965,6 +971,9 @@ export const AnalyticsView: React.FC = () => {
         </>
       )}
 
+      {/* -------------------------------------------------------- OSPF areas */}
+      {lab && <OspfAreas onChanged={run} />}
+
       {/* ------------------------------------------------------ lab controls */}
       {lab && (
         <LabControls
@@ -1016,6 +1025,321 @@ export const AnalyticsView: React.FC = () => {
 };
 
 /* ------------------------------------------------------------------ pieces */
+
+/**
+ * OSPF areas across the live lab, read from each router's OSPF process.
+ *
+ * Area 0 is the backbone and is shown as such rather than as a value to pick.
+ * Changing an interface's area genuinely re-floods the area, so a change is
+ * previewed -- with the pairs it puts at risk -- and only then applied.
+ */
+function OspfAreas({ onChanged }: { onChanged: () => void }) {
+  const [inventory, setInventory] = useState<OspfAreaInventory | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [device, setDevice] = useState('');
+  const [iface, setIface] = useState('');
+  const [target, setTarget] = useState('');
+
+  const [preview, setPreview] = useState<OspfAreaPreview | null>(null);
+  const [result, setResult] = useState<OspfAreaApplied | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await getOspfAreas();
+      setInventory(data);
+      setError(null);
+    } catch (err) {
+      // Keep the last good inventory rather than blanking the panel: a single
+      // failed re-read should not look like the lab went away.
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const router: OspfAreaRouter | null =
+    inventory?.routers.find((r) => r.device === device) ?? null;
+  const selectedIface = router?.interfaces.find((i) => i.interface === iface) ?? null;
+
+  // Default the pickers to the first router and its first interface once the
+  // inventory arrives, and keep them valid across a reload.
+  useEffect(() => {
+    if (!inventory?.routers.length) return;
+    if (!inventory.routers.some((r) => r.device === device)) {
+      setDevice(inventory.routers[0].device);
+      return;
+    }
+    const first = inventory.routers.find((r) => r.device === device);
+    if (first && !first.interfaces.some((i) => i.interface === iface)) {
+      setIface(first.interfaces[0]?.interface ?? '');
+    }
+  }, [inventory, device, iface]);
+
+  // The suggested target is the first non-backbone area this lab already runs,
+  // so the default is a real area rather than an invented one.
+  useEffect(() => {
+    if (target || !inventory?.areas.length) return;
+    const first = inventory.areas.find((a) => a !== inventory.backbone_area);
+    setTarget(first === undefined ? '1' : String(first));
+  }, [inventory, target]);
+
+  /** Run a preview or an apply, then re-read the live areas on success. */
+  const guard = async (key: string, fn: () => Promise<void>) => {
+    setBusy(key);
+    try {
+      await fn();
+      setError(null);
+      await load();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!inventory) {
+    return (
+      <div className="card p-5 space-y-2">
+        <h3 className="text-base font-bold text-ink flex items-center gap-2">
+          <GitFork className="w-4 h-4 text-ai" />
+          OSPF areas
+        </h3>
+        {error ? (
+          <p className="text-xs text-bad font-mono">{error}</p>
+        ) : (
+          <p className="text-xs text-ink-muted">Reading area state from the routers…</p>
+        )}
+      </div>
+    );
+  }
+
+  const backbone = inventory.backbone_dotted;
+  const abrs = new Set(inventory.abrs);
+
+  return (
+    <div className="card p-5 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-base font-bold text-ink flex items-center gap-2">
+            <GitFork className="w-4 h-4 text-ai" />
+            OSPF areas
+          </h3>
+          <p className="text-xs text-ink-soft mt-0.5">
+            Read from each router with{' '}
+            <span className="font-mono text-ink">show ip ospf interface</span>. Area{' '}
+            <span className="font-mono text-ink">{backbone}</span> is the backbone ·
+            areas in use {inventory.areas_dotted.join(', ')}
+          </p>
+        </div>
+        <button className="btn-secondary" onClick={load} disabled={busy !== null}>
+          <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} /> Re-read
+        </button>
+      </div>
+
+      {/* ------------------------------------------------------- per-router */}
+      <div className="overflow-x-auto">
+        <table className="data-table w-full text-xs">
+          <thead>
+            <tr>
+              <th className="text-left">Router</th>
+              <th className="text-left">Role</th>
+              <th className="text-left">Router ID</th>
+              <th className="text-left">Areas</th>
+              <th className="text-left">Interfaces</th>
+            </tr>
+          </thead>
+          <tbody>
+            {inventory.routers.map((r) => (
+              <tr key={r.device}>
+                <td className="font-mono text-ink">{r.device}</td>
+                <td>
+                  <span className={abrs.has(r.device) ? 'pill-info' : 'pill-faint'}>
+                    {r.role}
+                  </span>
+                </td>
+                <td className="font-mono text-ink-soft">{r.router_id ?? '—'}</td>
+                <td className="font-mono text-ink-soft">{r.areas_dotted.join(', ')}</td>
+                <td className="font-mono text-[11px] text-ink-muted">
+                  {r.interfaces
+                    .map((i) => `${i.interface}:${i.area === 0 ? '0' : i.area}`)
+                    .join('  ')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ------------------------------------------------------- area editor */}
+      <div className="bg-panel border border-line rounded-xl p-4 space-y-3">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-ink-muted">
+          Move an interface to another area
+        </span>
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <label className="label" htmlFor="ospf-device">Router</label>
+            <select
+              id="ospf-device"
+              className="field w-28"
+              value={device}
+              onChange={(e) => {
+                setDevice(e.target.value);
+                setPreview(null);
+                setResult(null);
+              }}
+            >
+              {inventory.routers.map((r) => (
+                <option key={r.device} value={r.device}>{r.device}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="ospf-iface">Interface</label>
+            <select
+              id="ospf-iface"
+              className="field w-28"
+              value={iface}
+              onChange={(e) => {
+                setIface(e.target.value);
+                setPreview(null);
+                setResult(null);
+              }}
+            >
+              {(router?.interfaces ?? []).map((i) => (
+                <option key={i.interface} value={i.interface}>
+                  {i.interface} · area {i.area === 0 ? '0' : i.area}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="ospf-target">Target area</label>
+            <input
+              id="ospf-target"
+              className="field w-24"
+              value={target}
+              onChange={(e) => {
+                setTarget(e.target.value);
+                setPreview(null);
+              }}
+            />
+          </div>
+          <button
+            className="btn-primary"
+            disabled={busy !== null || !selectedIface || selectedIface.area === 0}
+            onClick={() =>
+              guard('preview', async () => {
+                const p = await setOspfArea(device, iface, target, true);
+                // The backend returns one shape or the other; a preview that
+                // came back applied would mean the two calls were crossed.
+                if (p.preview) {
+                  setPreview(p);
+                  setResult(null);
+                }
+              })
+            }
+          >
+            {busy === 'preview' ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Radar className="w-3.5 h-3.5" />
+            )}
+            Preview change
+          </button>
+        </div>
+
+        {selectedIface?.area === 0 && (
+          <p className="text-[11px] text-warn leading-relaxed">
+            {iface} is on the backbone, so it cannot be moved into another area — that
+            would strand {device}, because non-backbone areas only learn about each
+            other through area 0. Add an interface in the target area to make{' '}
+            {device} an ABR instead.
+          </p>
+        )}
+
+        {/* --------------------------------------------------------- preview */}
+        {preview && (
+          <div className="border border-warn rounded-xl p-3 space-y-2">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-warn">
+              Preview · {preview.device}/{preview.interface} {preview.from_area_dotted} →{' '}
+              {preview.to_area_dotted}
+            </p>
+            <p className="text-xs text-ink-soft leading-relaxed">{preview.warning}</p>
+            {preview.at_risk_count > 0 && (
+              <div className="font-mono text-[11px] text-ink-muted max-h-24 overflow-y-auto">
+                {preview.at_risk_pairs.map((p) => (
+                  <div key={`${p.source}-${p.destination}`}>
+                    {p.source} → {p.destination}
+                  </div>
+                ))}
+              </div>
+            )}
+            {(preview.would_become_abr || preview.was_abr) && (
+              <p className="text-[11px] text-info">
+                {preview.would_become_abr
+                  ? `${preview.device} becomes an ABR: it will hold interfaces in more than one area.`
+                  : `${preview.device} stops being an ABR.`}
+              </p>
+            )}
+            <button
+              className="btn-danger"
+              disabled={busy !== null}
+              onClick={() =>
+                guard('apply', async () => {
+                  const applied = await setOspfArea(device, iface, target, false);
+                  if (!applied.preview) {
+                    setResult(applied);
+                    setPreview(null);
+                  }
+                })
+              }
+            >
+              {busy === 'apply' ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Zap className="w-3.5 h-3.5" />
+              )}
+              Apply area change
+            </button>
+          </div>
+        )}
+
+        {/* ---------------------------------------------------------- result */}
+        {result && (
+          <div className="border border-ok rounded-xl p-3 space-y-1">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-ok">
+              Applied · measured read-back
+            </p>
+            <p className="text-xs text-ink-soft leading-relaxed">{result.message}</p>
+          </div>
+        )}
+
+        {error && <p className="text-xs text-bad font-mono leading-relaxed">{error}</p>}
+
+        {inventory.errors.length > 0 && (
+          <p className="text-[11px] text-warn font-mono">
+            {inventory.errors.length} router(s) did not report areas:{' '}
+            {inventory.errors.map((e) => e.device).join(', ')}
+          </p>
+        )}
+      </div>
+
+      <p className="text-[11px] text-ink-muted leading-relaxed">
+        Changing an area is a routing change, not a label: OSPF only forms an adjacency
+        between interfaces in the same area, so moving one side of a link leaves the
+        far side unable to route over it until it follows. The change is applied through{' '}
+        <span className="font-mono text-ink">vtysh</span> and confirmed by reading the
+        OSPF process back — a refused command still exits 0, so exit status alone proves
+        nothing.
+      </p>
+    </div>
+  );
+}
 
 /**
  * Direct control of the lab: degrade a real link, take a real link down, and

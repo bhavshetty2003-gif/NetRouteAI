@@ -61,6 +61,7 @@ from models import (
     LinkStateRequest,
     LiveAnalyticsRequest,
     MeasureRequest,
+    OspfAreaRequest,
     RouteRecommendationRequest,
     RouteRecommendationResponse,
     RouteSteerRequest,
@@ -444,6 +445,90 @@ def lab_traffic_status():
     return traffic_gen.status()
 
 
+@app.get("/api/lab/ospf/areas")
+def lab_ospf_areas():
+    """Area assignment for every OSPF interface in the lab, read from FRR.
+
+    Read from `show ip ospf interface` rather than from `frr.conf` or the drawn
+    topology: an interface only appears in that output once OSPF is actually
+    operational on it, so a configured-but-down interface is correctly reported
+    as absent instead of as being in area 0.
+    """
+    from metrics_collector import _client
+    from ospf_area import area_inventory
+
+    lab = discover_lab()
+    if not lab["online"]:
+        raise _lab_error(LabUnavailable(lab.get("error") or "Lab not running"))
+
+    try:
+        return area_inventory(_client(), lab)
+    except LabUnavailable as exc:
+        raise _lab_error(exc) from exc
+
+
+@app.post("/api/lab/ospf/area")
+def lab_ospf_area(request: OspfAreaRequest):
+    """Preview or apply an interface area change on a live router.
+
+    Two calls, deliberately: the first with `preview: true` reports which
+    currently-reachable pairs the change would put at risk, and only the second
+    applies it. A single `apply: true` call is refused so that no caller can
+    skip the report.
+    """
+    from metrics_collector import _client
+    from ospf_area import (
+        AreaError,
+        apply_move,
+        normalise_area,
+        preview_move,
+        read_router_areas,
+    )
+
+    lab = discover_lab()
+    if not lab["online"]:
+        raise _lab_error(LabUnavailable(lab.get("error") or "Lab not running"))
+
+    device = request.device.upper()
+    entry = next(
+        (d for d in lab["devices"] if d["id"] == device and d["type"] == "router"),
+        None,
+    )
+    if entry is None:
+        raise _lab_error(
+            LabUnavailable(f"'{request.device}' is not a router in the running lab")
+        )
+
+    client = _client()
+    try:
+        state = read_router_areas(client, entry["container"])
+        state = {"device": device, "container": entry["container"], **state}
+
+        key = _move_key(device, request.interface, request.area)
+        target = normalise_area(request.area)
+
+        if request.preview:
+            sweep = _sweep_pairs(lab, max_probes=400, max_workers=24)
+            reachable = {
+                f"{p['source']}|{p['destination']}": p["reachable"]
+                for p in sweep["pairs"]
+            }
+            report = preview_move(state, lab, request.interface, target, reachable)
+            # Authorise exactly this move, once.
+            _confirmed_area_moves[key] = True
+            return {"preview": True, **report}
+
+        if not _confirmed_area_moves.pop(key, False):
+            raise AreaError(
+                "Preview this change before applying it. Re-send with preview: true, "
+                "then apply the same device, interface and area."
+            )
+
+        return {"preview": False, **apply_move(client, state, request.interface, target)}
+    except AreaError as exc:
+        raise _lab_error(exc) from exc
+
+
 @app.get("/api/lab/routes")
 def lab_routes(device: str = "R1"):
     """Static routes currently installed on a lab router, for an exact revert."""
@@ -579,6 +664,19 @@ def lab_reachability(max_probes: int = 400, max_workers: int = 24):
     if not lab["online"]:
         raise _lab_error(LabUnavailable(lab.get("error") or "Lab not running"))
 
+    return _sweep_pairs(lab, max_probes=max_probes, max_workers=max_workers)
+
+
+def _sweep_pairs(
+    lab: dict[str, Any], max_probes: int = 400, max_workers: int = 24
+) -> dict[str, Any]:
+    """Probe every unordered device pair and report which ones answer.
+
+    The full matrix is swept, not a capped prefix: an earlier 60-pair cap
+    silently left later pairs unprobed, so the UI showed "unreachable" for pairs
+    it had never actually tried. At 19 devices the matrix is 171 pairs and takes
+    ~28s.
+    """
     ids = [d["id"] for d in lab["devices"]]
     pairs = [(a, b) for i, a in enumerate(ids) for b in ids[i + 1:]][:max_probes]
 
@@ -644,6 +742,21 @@ def dataset_collect(request: LiveAnalyticsRequest, background_tasks: BackgroundT
 
 def _log_dataset_progress(message: str) -> None:
     logger.info("dataset collection: %s", message)
+
+
+# Area changes that have been previewed and are therefore allowed to apply.
+# Keyed by device/interface/area so a preview authorises exactly one change: a
+# caller cannot preview one move and then apply a different one. Single-process
+# and short-lived by design -- this is a guard against an accidental un-previewed
+# write, not a security boundary.
+_confirmed_area_moves: dict[tuple[str, str, str], bool] = {}
+
+
+def _move_key(device: str, interface: str, area: str) -> tuple[str, str, str]:
+    """Preview keys normalise the area so `2`, `2.0.0.0` and `0.0.0.2` match."""
+    from ospf_area import format_area, normalise_area
+
+    return (device.upper(), interface, format_area(normalise_area(area)))
 
 
 @app.get("/api/train/samples")

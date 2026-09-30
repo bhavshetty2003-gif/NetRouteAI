@@ -153,6 +153,23 @@ class TrafficRequest(BaseModel):
     running: bool = True
 
 
+class OspfAreaRequest(BaseModel):
+    """Preview or apply an OSPF interface area change on a live router.
+
+    `preview` must be sent first. Applying without it is refused rather than
+    defaulted, so the caller cannot black-hole the backbone by skipping the
+    blast-radius report -- moving an interface between areas re-floods summary
+    LSAs and can drop currently-reachable pairs.
+    """
+
+    device: str
+    interface: str
+    #: Target area. Accepts `2`, `2.0.0.0` or `0.0.0.2`. Area 0 is the backbone
+    #: and is rejected by the backend, not merely hidden in the UI.
+    area: str
+    preview: bool = False
+
+
 class ImpairRequest(BaseModel):
     device: str
     interface: str = "eth0"
