@@ -16,6 +16,7 @@ that instead of inventing numbers.
 from __future__ import annotations
 
 import ipaddress
+import math
 import re
 import time
 from typing import Any
@@ -409,9 +410,24 @@ def _measure_path_hops(path: list[str], lab: dict) -> dict[str, Any]:
         if s.get("packet_loss_percent") is not None
     ]
 
+    # How much of `total` is real signal and how much is spread. Each segment's
+    # `jitter_ms` is the standard deviation of that segment's own RTT samples,
+    # so for a sum of independent segments the uncertainty of the total is the
+    # root-sum-square of theirs. Without this the caller has a number to three
+    # decimal places and no idea whether 0.352 differs from 0.389, because on a
+    # veth pair the entire measurement is kernel scheduling noise: these hops
+    # have no real propagation delay at all, so a few microseconds of jitter
+    # between two `docker exec` spawns is most of the value being reported.
+    variance = sum(
+        s["jitter_ms"] ** 2
+        for s in segments
+        if s.get("jitter_ms") is not None
+    )
+
     return {
         "segments": segments,
         "total_latency_ms": round(total, 4) if measured else None,
+        "latency_margin_ms": round(math.sqrt(variance), 4) if measured else None,
         # The worst segment, not the mean: averaging loss would let a
         # completely dead hop read as a small number. Taken from the pings
         # above rather than from any per-edge constant.
@@ -1084,6 +1100,9 @@ def _route_report(
         "hop_count": len(path) - 1,
         "basis": basis,
         "latency_ms": measurements["total_latency_ms"],
+        # The measured spread of that figure. Callers must compare two latencies
+        # against this rather than against each other directly.
+        "latency_margin_ms": measurements.get("latency_margin_ms"),
         "reachable": measurements["reachable"],
         "measured_segments": measurements["measured_segments"],
         "segments": measurements["segments"],
@@ -1179,6 +1198,43 @@ def _build_comparison(result: dict[str, Any]) -> dict[str, Any]:
         else None
     )
 
+    # Is the difference between the two paths bigger than the wobble in our own
+    # measurement of it?
+    #
+    # Every hop in this lab is a veth pair, which has no real propagation delay:
+    # a whole four-hop path measures around 0.4 ms, essentially all of it Linux
+    # scheduling jitter between separate `docker exec` spawns. Repeated runs on
+    # an unchanged path ranged 0.304-0.412 ms, and across six runs of R12->R9
+    # the OSPF-minus-AI difference fell inside the measured spread five times
+    # out of six. Calling a winner on that basis, and printing it as a precise
+    # percentage, is the fluctuation being seen: the number is honest, the
+    # conclusion drawn from it is not. So a winner is only declared when the
+    # gap clears the combined margin, and otherwise the row says so.
+    def _margin(report: dict[str, Any]) -> float:
+        value = report.get("latency_margin_ms")
+        return float(value) if value is not None else 0.0
+
+    lat_margin = math.sqrt(_margin(ospf) ** 2 + _margin(ai) ** 2)
+    lat_gap = (
+        abs(ai_lat - ospf_lat)
+        if ospf_lat is not None and ai_lat is not None
+        else None
+    )
+    if lat_gap is None or ospf_lat is None or ai_lat is None:
+        lat_winner, lat_detail = "n/a", "not comparable"
+    elif lat_gap > lat_margin:
+        lat_winner = _winner(ospf_lat, ai_lat, lower_is_better=True)
+        lat_detail = (
+            f"{lat_delta:+.1f}% vs OSPF, "
+            f"clear of the ±{lat_margin:.3f} ms measurement spread"
+        )
+    else:
+        lat_winner = "tie"
+        lat_detail = (
+            f"{(ai_lat - ospf_lat):+.3f} ms apart, inside the "
+            f"±{lat_margin:.3f} ms measurement spread"
+        )
+
     hops_delta = ai["hop_count"] - ospf["hop_count"]
     cost_ospf = ospf["computed"].get("total_cost", 0)
     cost_ai = ai["computed"].get("total_cost", 0)
@@ -1187,10 +1243,12 @@ def _build_comparison(result: dict[str, Any]) -> dict[str, Any]:
         "rows": [
             {
                 "parameter": "Latency (RTT)",
-                "ospf": fmt(ospf_lat),
-                "ai": fmt(ai_lat),
-                "winner": _winner(ospf_lat, ai_lat, lower_is_better=True),
-                "detail": f"{lat_delta:+.1f}% vs OSPF" if lat_delta is not None else "not comparable",
+                "ospf": (
+                    fmt(ospf_lat) + (f" ±{_margin(ospf):.3f}" if _margin(ospf) else "")
+                ),
+                "ai": fmt(ai_lat) + (f" ±{_margin(ai):.3f}" if _margin(ai) else ""),
+                "winner": lat_winner,
+                "detail": lat_detail,
             },
             {
                 "parameter": "Hop Count",

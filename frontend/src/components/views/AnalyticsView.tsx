@@ -980,6 +980,7 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
                     <th>OSPF</th>
                     <th>AI</th>
                     <th>Better</th>
+                    <th>Why</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1000,6 +1001,13 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
                         >
                           {row.winner === 'tie' ? 'tie' : row.winner === 'n/a' ? 'n/a' : row.winner}
                         </span>
+                      </td>
+                      {/* Why the verdict came out the way it did. Without this the
+                          table asserted a winner on a difference smaller than the
+                          measurement's own spread, and gave no way to tell a real
+                          result from noise. */}
+                      <td className="text-[11px] text-ink-muted font-mono">
+                        {row.detail ?? '—'}
                       </td>
                     </tr>
                   ))}
