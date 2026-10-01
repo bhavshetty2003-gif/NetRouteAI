@@ -37,6 +37,7 @@ from metrics_collector import (
     _client,
     apply_impairment,
     clear_impairment,
+    measure_bandwidth,
     measure_path,
     probe_interfaces,
 )
@@ -239,6 +240,19 @@ def collect(
                     _drive_traffic(client, source, neighbours(source)[:2], 1.5)
 
                 before = _path_queue_state(lab, path, client)
+                # Throughput is sampled while the profile is still in effect, so
+                # the row records what the link actually carried under that
+                # condition. The old code wrote the profile's tbf rate limit (or a
+                # flat 1000 when there was none), which is a configured number,
+                # not an observation -- the model learned a constant column.
+                target_ip = lab["ip_index"].get(destination)
+                source_container = lab["container_map"].get(source)
+                throughput_mbps = None
+                if target_ip and source_container:
+                    achieved = measure_bandwidth(
+                        client, source_container, [target_ip], duration=1.0
+                    )
+                    throughput_mbps = float(achieved["throughput_mbps"])
                 measurement = measure_path(source, destination, count=4, include_traceroute=True)
                 after = _path_queue_state(lab, path, client)
             except LabUnavailable:
@@ -253,6 +267,12 @@ def collect(
                 missed += 1
                 continue
 
+            if throughput_mbps is None:
+                # Nothing moved the counters, so there is no throughput to
+                # record. Skipping beats writing a guess.
+                missed += 1
+                continue
+
             congestion, _drops, _errors = _congestion_from(before, after)
             cost = _path_cost(lab, path, costs)
 
@@ -260,7 +280,7 @@ def collect(
                 {
                     "latency_ms": measurement["latency_ms"],
                     "packet_loss_percent": measurement["packet_loss_percent"],
-                    "bandwidth_mbps": float(impair.get("bandwidth", 1000)),
+                    "bandwidth_mbps": throughput_mbps,
                     "hop_count": measurement.get("hop_count") or len(path) - 1,
                     "total_cost": cost,
                     "congestion_level": congestion,

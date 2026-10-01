@@ -263,26 +263,15 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
   // Throughput is a separate probe: it drives real traffic and samples the
   // interface byte counters, so it is not folded into the comparison call.
   const runThroughput = useCallback(async () => {
-    // Throughput needs a directly adjacent peer; a remote pair measures nothing.
-    // Falls back to any transit neighbour of the source.
-    const neighbour =
-      lab?.links.find(
-        (l) =>
-          (l.source === source || l.target === source) &&
-          l.kind === 'transit' &&
-          (l.source === source ? l.target : l.source) !== destination
-      ) ?? null;
-    const peer = neighbour ? (neighbour.source === source ? neighbour.target : neighbour.source) : null;
-    if (!peer) {
-      setThroughput(null);
-      return;
-    }
+    // Measure the pair actually being analysed. This used to substitute the
+    // source's nearest transit neighbour, so the throughput shown sat next to a
+    // latency, loss and hop count for a different destination entirely.
     try {
-      setThroughput(await measureBandwidth(source, peer, 2));
+      setThroughput(await measureBandwidth(source, destination, 2));
     } catch {
       setThroughput(null);
     }
-  }, [lab, source, destination]);
+  }, [source, destination]);
 
   useEffect(() => {
     if (!hasTopologyRouters || !lab?.online) return;
@@ -852,13 +841,28 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
               <MetricCard
                 icon={<TrendingUp className="w-4 h-4 text-accent" />}
                 label="Throughput (observed)"
-                value={throughput ? `${throughput.throughput_mbps.toFixed(1)} Mbps` : '—'}
+                value={
+                  throughput
+                    ? throughput.reachable === false
+                      ? 'nothing answered'
+                      : `${throughput.throughput_mbps.toFixed(1)} Mbps`
+                    : '—'
+                }
                 detail={
                   throughput
-                    ? `${(throughput.rx_bytes / 1e6).toFixed(2)} MB in / ${(throughput.tx_bytes / 1e6).toFixed(2)} MB out over ${throughput.sample_seconds}s on ${throughput.container}`
+                    ? throughput.reachable === false
+                      ? throughput.note ??
+                        'The counters did not move, so 0 Mbps is measured, not assumed.'
+                      : `${(throughput.rx_bytes / 1e6).toFixed(2)} MB in / ${(throughput.tx_bytes / 1e6).toFixed(2)} MB out over ${throughput.sample_seconds}s on ${throughput.container}`
                     : 'Run a throughput probe to populate'
                 }
-                source={throughput ? 'byte-counter delta from /proc/net/dev' : undefined}
+                source={
+                  throughput
+                    ? throughput.reachable === false
+                      ? 'no reply, so no byte delta to report'
+                      : `byte-counter delta from /proc/net/dev on ${throughput.measured_interface ?? '—'}, ${throughput.source} -> ${throughput.destination}`
+                    : undefined
+                }
                 action={<button onClick={runThroughput} className="btn-ghost !px-2 !py-1 text-[10px]">probe</button>}
               />
               <MetricCard
@@ -1115,7 +1119,7 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
               {throughput && (
                 <CommandLine
                   label="throughput"
-                  command={`/proc/net/dev deltas on ${throughput.container} over ${throughput.sample_seconds}s`}
+                  command={`ping ${(throughput.peers_pinged ?? []).join(' ') || '—'} from ${throughput.container}, then /proc/net/dev deltas over ${throughput.sample_seconds}s`}
                 />
               )}
               {convergence && (

@@ -43,7 +43,7 @@ import {
   type DeployState,
   type DeployTopologyPayload,
 } from './utils/api';
-import { createPacket, advancePacket, computeMetrics } from './utils/simulationEngine';
+import { createPacket, advancePacket } from './utils/simulationEngine';
 import { LiveMetricsPanel } from './components/LiveMetricsPanel';
 import { LabDeployBar } from './components/LabDeployBar';
 import { Navbar } from './components/Navbar';
@@ -1166,7 +1166,7 @@ export default function App() {
               {
                 id: `log-hop-${currentHop}-${Date.now()}`,
                 timestamp: new Date().toLocaleTimeString(),
-                message: `Hop ${currentHop + 1} delivered to ${hop.toDeviceId} via ${hop.toPort} [RTT 0.4ms]`,
+                message: `Hop ${currentHop + 1} reached ${hop.toDeviceId} via ${hop.toPort} (canvas animation)`,
                 type: 'info',
                 hop: currentHop,
               },
@@ -1212,13 +1212,13 @@ export default function App() {
               ...prev,
               status: 'success',
               hopProgress: 1,
-              message: `Packet Delivered Successfully to ${targetId}! (Flash Green)`,
+              message: `Packet drawn to ${targetId} (flash green)`,
               logs: [
                 ...prev.logs,
                 {
                   id: `log-delivered-${Date.now()}`,
                   timestamp: new Date().toLocaleTimeString(),
-                  message: `ICMP Echo Reply verified: 100% success rate (5/5), round-trip avg 3ms`,
+                  message: `Packet drawn across ${totalHops} hop(s) to ${targetId}. This is the canvas animation only — no ping was sent, so latency and loss are not measured here. Use Live Metrics or Analytics to measure them on the lab.`,
                   type: 'success',
                 },
               ],
@@ -1570,27 +1570,7 @@ export default function App() {
         ) : activeTab === 'analytics' ? (
           <AnalyticsView devices={devices} />
         ) : (
-          <MonitoringView
-            devices={devices}
-            cables={cables}
-            onToggleInterface={(devId, ifaceId) => {
-              setDevices((prev) =>
-                prev.map((d) => {
-                  if (d.id === devId) {
-                    return {
-                      ...d,
-                      interfaces: d.interfaces.map((i) =>
-                        i.id === ifaceId
-                          ? { ...i, status: i.status === 'up' ? ('down' as const) : ('up' as const) }
-                          : i
-                      ),
-                    };
-                  }
-                  return d;
-                })
-              );
-            }}
-          />
+          <MonitoringView devices={devices} />
         )}
       </div>
 

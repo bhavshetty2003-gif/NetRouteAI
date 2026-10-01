@@ -65,6 +65,7 @@ from metrics_collector import (
     collect_all,
     measure_bandwidth,
     measure_path,
+    probe_ping,
     set_link_state,
 )
 from models import (
@@ -77,6 +78,7 @@ from models import (
     LiveAnalyticsRequest,
     MeasureRequest,
     OspfAreaRequest,
+    RawPingRequest,
     RouteRecommendationRequest,
     RouteRecommendationResponse,
     RouteSteerRequest,
@@ -327,6 +329,99 @@ def lab_status():
     }
 
 
+@app.post("/api/lab/ping")
+def lab_ping(request: RawPingRequest):
+    """Ping a literal IP from one lab router's container.
+
+    The designer's CLI needs this: it is asked to ping whatever address the user
+    types, not only the addresses the discovery index knows. Without it the CLI
+    had no honest answer and printed a made-up one.
+    """
+    lab = discover_lab()
+    if not lab["online"]:
+        raise _lab_error(LabUnavailable(lab.get("error") or "Lab not running"))
+
+    name = request.device.upper()
+    device = next((d for d in lab["devices"] if d["id"] == name), None)
+    if not device:
+        raise _lab_error(LabUnavailable(f"'{request.device}' is not part of the running lab"))
+    if device.get("type") != "router":
+        raise _lab_error(
+            LabUnavailable(f"{name} is a {device.get('type')}, which has no shell to ping from")
+        )
+
+    try:
+        result = probe_ping(_client(), device["container"], request.target, count=request.count)
+    except LabUnavailable as exc:
+        raise _lab_error(exc) from exc
+    except Exception as exc:  # a bad target must not escape as a 500
+        raise _lab_error(LabUnavailable(f"ping failed: {exc}")) from exc
+
+    result["device"] = name
+    return result
+
+
+def _training_row(source: str, destination: str, measurement: dict, client) -> None:
+    """Store one training row built only from things that were measured.
+
+    This used to write `bandwidth_mbps: 1000` and a path cost copied from the
+    hop count, so the Random Forest was trained on two fabricated columns: a flat
+    1000 Mbps on every row regardless of the link, and "cost" that was just the
+    number of hops. A model handed constant columns learns nothing from them, and
+    any confidence derived from them was noise. Both are now read for real --
+    throughput from /proc/net/dev deltas while the pair is actually pinged, and
+    cost from the live `ip ospf cost` of each interface on the traced path.
+    """
+    from dataset_collector import _congestion_from, _path_cost, _path_queue_state
+    from ospf_ai_service import _interface_costs
+
+    lab = discover_lab()
+    if not lab["online"]:
+        return
+
+    src = source.upper()
+    dst = destination.upper()
+    path = [d["id"] for d in lab["devices"] if d["id"] in (src, dst)]
+    try:
+        target_ip = measurement.get("target_ip") or lab["ip_index"].get(dst)
+        source_container = lab["container_map"].get(src)
+        if not target_ip or not source_container:
+            return
+
+        before = _path_queue_state(lab, path, client)
+        throughput = measure_bandwidth(
+            client, source_container, [target_ip], duration=1.5
+        )
+        after = _path_queue_state(lab, path, client)
+    except (LabUnavailable, KeyError):
+        # Without a throughput number there is no honest row to store, and a row
+        # with a placeholder in it is worse than no row.
+        return
+
+    congestion, _drops, _errors = _congestion_from(before, after)
+    traced = measurement.get("device_path") or []
+    if len(traced) >= 2:
+        path = traced
+
+    try:
+        costs = _interface_costs(client, lab)
+    except LabUnavailable:
+        costs = {}
+    cost = _path_cost(lab, path, costs)
+
+    record_measurement(
+        {
+            "latency_ms": measurement["latency_ms"],
+            "packet_loss_percent": measurement["packet_loss_percent"],
+            "bandwidth_mbps": float(throughput["throughput_mbps"]),
+            "hop_count": measurement.get("hop_count") or max(1, len(path) - 1),
+            "total_cost": cost,
+            "congestion_level": congestion,
+            "topology_id": f"{src}-{dst}",
+        }
+    )
+
+
 @app.post("/api/lab/measure")
 def lab_measure(request: MeasureRequest):
     """Measure a real path with ping and traceroute."""
@@ -340,21 +435,15 @@ def lab_measure(request: MeasureRequest):
     except LabUnavailable as exc:
         raise _lab_error(exc) from exc
 
-    # Persist as a training row so the model learns from real observations
+    # Persist as a training row so the model learns from real observations.
     if result["reachable"] and result["latency_ms"] is not None:
-        record_measurement(
-            {
-                "latency_ms": result["latency_ms"],
-                "packet_loss_percent": result["packet_loss_percent"],
-                "bandwidth_mbps": 1000,
-                "hop_count": result.get("hop_count") or 1,
-                "total_cost": result.get("hop_count") or 1,
-                "congestion_level": min(
-                    1.0, result["packet_loss_percent"] / 10 + (result["jitter_ms"] or 0) / 10
-                ),
-                "topology_id": f"{request.source}-{request.destination}",
-            }
-        )
+        try:
+            _training_row(request.source, request.destination, result, _client())
+        except Exception:  # noqa: BLE001
+            # A failed training write must not fail the measurement the caller
+            # actually asked for; the row is a side effect, not the result.
+            pass
+
     return result
 
 
@@ -642,7 +731,16 @@ def lab_routes(device: str = "R1"):
 
 @app.post("/api/lab/bandwidth")
 def lab_bandwidth(request: MeasureRequest):
-    """Generate traffic and measure achieved throughput from byte counters."""
+    """Generate traffic and measure achieved throughput from byte counters.
+
+    The requested destination is what gets pinged. This used to ignore
+    `destination` and ping every adjacent peer instead, so the designer and the
+    analytics page reported throughput for the source's nearest neighbour while
+    labelling it with whatever pair the user had picked. Adjacency is not
+    required -- the counters being sampled are the source's own, and they move
+    for a destination several hops away just as they do for a neighbour (R1 to R9
+    across three hops and two areas moves the same bytes R1 to R2 does).
+    """
     from metrics_collector import _client
 
     lab = discover_lab()
@@ -653,24 +751,46 @@ def lab_bandwidth(request: MeasureRequest):
     if src not in lab["ip_index"]:
         raise _lab_error(LabUnavailable(f"'{request.source}' is not in the running lab"))
 
-    # Target any other device that is directly adjacent
-    adj = lab["links"]
-    peers = [
-        lab["ip_index"][l["target"]]
-        for l in adj
-        if l["source"] == src and l["target"] in lab["ip_index"]
-    ]
+    dst = request.destination.upper()
+    if dst and dst in lab["ip_index"]:
+        peers = [lab["ip_index"][dst]]
+    elif dst:
+        raise _lab_error(
+            LabUnavailable(f"'{request.destination}' is not in the running lab")
+        )
+    else:
+        # No destination named: fall back to whatever is directly adjacent, and
+        # say so in the result rather than implying a specific pair.
+        peers = [
+            lab["ip_index"][l["target"]]
+            for l in lab["links"]
+            if l["source"] == src and l["target"] in lab["ip_index"]
+        ]
     if not peers:
         raise _lab_error(
             LabUnavailable(f"'{request.source}' has no adjacent device to measure against")
         )
 
     try:
-        return measure_bandwidth(
+        result = measure_bandwidth(
             _client(), lab["container_map"][src], peers, duration=request.duration
         )
     except LabUnavailable as exc:
         raise _lab_error(exc) from exc
+
+    result["source"] = src
+    result["destination"] = dst or "adjacent peers"
+    result["peers_pinged"] = peers
+    # A multi-address destination may not answer on its first address (R9's
+    # r3_r9 address is unroutable from some sources while its r9_r10 one is
+    # fine), and `measure_bandwidth` reports a real zero when nothing answered.
+    result["reachable"] = result["tx_bytes"] > 0 or result["rx_bytes"] > 0
+    if not result["reachable"]:
+        result["note"] = (
+            f"Nothing was answered by {', '.join(peers)}, so the counters did not move. "
+            "That is 0 Mbps measured, not an assumed link speed."
+        )
+    return result
 
 
 @app.post("/api/lab/impair")

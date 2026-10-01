@@ -126,6 +126,20 @@ class MeasureRequest(BaseModel):
     duration: float = 2.0
 
 
+class RawPingRequest(BaseModel):
+    """Ping an arbitrary IP from a lab router's container.
+
+    `device` names a lab device (so the CLI's own router can be the source) and
+    `target` is a literal address. This exists because the designer's CLI used to
+    print a fabricated `!!!!!` / "Success rate is 100 percent (5/5)" pair for
+    every target, which was both invented and self-contradictory.
+    """
+
+    device: str
+    target: str
+    count: int = Field(default=5, ge=1, le=20)
+
+
 class LiveAnalyticsRequest(BaseModel):
     source: str = "R1"
     destination: str = "R11"

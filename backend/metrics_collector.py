@@ -584,8 +584,17 @@ def measure_bandwidth(
 ) -> dict[str, Any]:
     """Measure real throughput by generating traffic and reading byte counters.
 
-    Uses ping flood for the stimulus (always present) and samples
-    /proc/net/dev before/after to compute the achieved bit rate.
+    `ping` is the stimulus because `iperf3` is absent from every lab image
+    (alpine and frr alike). The payload size and interval are pushed hard --
+    `ping -s 4000 -i 0.01` -- because the default `-i 0.05` on an 84-byte echo
+    request only offers about 0.03 Mbps of load, which measures the packet rate
+    rather than the link. With a 4 KB payload at 100 Hz the same probe moves
+    roughly 4 Mbps of real bytes. Sampling /proc/net/dev before and after gives
+    the achieved bit rate either way; a smaller interval or payload falls back
+    when the container refuses it.
+
+    The counters being sampled are this container's own, so the peer does not
+    need to be adjacent: they move for a destination several hops away too.
     """
     container = _container(client, container_name)
 
@@ -599,32 +608,76 @@ def measure_bandwidth(
             parsed[parts[0]] = (int(parts[1]), int(parts[9]))
         return parsed
 
-    before = counters()
-    processes: list[Any] = []
-    for ip in peer_ips:
-        try:
-            processes.append(
-                container.exec_run(
-                    ["ping", "-i", "0.05", "-c", str(int(duration / 0.05)), "-W", "1", ip],
-                    detach=True,
+    def stimulus(ips: list[str], interval: str, size: str) -> list[Any]:
+        procs: list[Any] = []
+        count = max(1, int(duration / float(interval)))
+        for ip in ips:
+            try:
+                procs.append(
+                    container.exec_run(
+                        ["ping", "-i", interval, "-s", size, "-c", str(count), "-W", "1", ip],
+                        detach=True,
+                    )
                 )
-            )
-        except Exception:  # noqa: BLE001
-            continue
+            except Exception:  # noqa: BLE001
+                continue
+        return procs
+
+    before = counters()
+    processes = stimulus(peer_ips, "0.01", "4000")
 
     time.sleep(duration)
+    # No movement means the fast form was refused or nothing answered. Re-try
+    # once with the plain ping before reporting a zero, so a zero means
+    # "nothing was forwarded", not "the flag I tried was too fast".
     after = counters()
+    moved = any(
+        iface != "lo"
+        and (
+            max(0, after[iface][0] - before[iface][0])
+            + max(0, after[iface][1] - before[iface][1])
+        )
+        > 0
+        for iface in set(before) & set(after)
+    )
+    if not moved and processes:
+        for proc in processes:
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        processes = stimulus(peer_ips, "0.05", "84")
 
-    rx_delta = 0
-    tx_delta = 0
+    after = counters()
+    for proc in processes:
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Per-interface deltas, not a sum across every interface. The probe is a
+    # single flow, so it crosses exactly one egress interface and returns on one
+    # ingress interface; anything else moving is unrelated traffic -- a
+    # background ping loop, a neighbour's probes -- and folding it in reported a
+    # figure that no single link carried. The headline is taken from the busiest
+    # interface, which is the link actually carrying this traffic.
+    per_interface: dict[str, dict[str, int]] = {}
     for iface in set(before) & set(after):
         if iface == "lo":
             continue
-        rx_delta += max(0, after[iface][0] - before[iface][0])
-        tx_delta += max(0, after[iface][1] - before[iface][1])
+        rx = max(0, after[iface][0] - before[iface][0])
+        tx = max(0, after[iface][1] - before[iface][1])
+        if rx or tx:
+            per_interface[iface] = {"rx_bytes": rx, "tx_bytes": tx}
+
+    busiest = max(per_interface, key=lambda i: sum(per_interface[i].values()), default=None)
+    rx_delta = per_interface[busiest]["rx_bytes"] if busiest else 0
+    tx_delta = per_interface[busiest]["tx_bytes"] if busiest else 0
 
     return {
         "container": container_name,
+        "measured_interface": busiest,
+        "per_interface": per_interface,
         "sample_seconds": duration,
         "rx_bytes": rx_delta,
         "tx_bytes": tx_delta,

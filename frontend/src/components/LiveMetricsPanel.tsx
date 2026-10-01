@@ -156,35 +156,31 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
       const result = await getLiveAnalytics(source, destination, false, 'ospf', PACKET_COUNT);
       setData(result);
       setMeasured(true);
-      // Throughput needs an adjacent peer, so only ask when the endpoints are
-      // directly linked. Asking otherwise returns a confident-looking zero.
-      const adjacent = cables.some(
-        (c) =>
-          (c.fromDeviceId === source && c.toDeviceId === destination) ||
-          (c.fromDeviceId === destination && c.toDeviceId === source)
-      );
-      if (adjacent) {
-        try {
-          const bw = await measureBandwidth(source, destination, 2);
-          setThroughput({
-            mbps: bw.throughput_mbps,
-            basis: `achieved over ${bw.sample_seconds}s from /proc/net/dev counter deltas`,
-          });
-        } catch (bwErr) {
-          setThroughput({ mbps: null, basis: bwErr instanceof Error ? bwErr.message : '' });
-        }
-      } else {
-        setThroughput({
-          mbps: null,
-          basis: 'not measured: throughput is only sampled across a direct link',
-        });
+      // Throughput is sampled on whatever interface carries this pair's traffic,
+      // so it works across several hops -- there is no reason to withhold it for
+      // a non-adjacent pair the way there used to be.
+      try {
+        const bw = await measureBandwidth(source, destination, 2);
+        setThroughput(
+          bw.reachable === false
+            ? {
+                mbps: null,
+                basis: bw.note ?? 'nothing answered, so the counters never moved',
+              }
+            : {
+                mbps: bw.throughput_mbps,
+                basis: `achieved over ${bw.sample_seconds}s from /proc/net/dev counter deltas on ${bw.measured_interface ?? '—'}`,
+              }
+        );
+      } catch (bwErr) {
+        setThroughput({ mbps: null, basis: bwErr instanceof Error ? bwErr.message : '' });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
-  }, [source, destination, cables]);
+  }, [source, destination]);
 
   const e2e = data?.end_to_end;
   const ospf = data?.ospf;

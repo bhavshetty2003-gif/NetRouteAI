@@ -766,14 +766,25 @@ export interface BandwidthResult {
   tx_bytes: number;
   throughput_mbps: number;
   utilization_percent: number;
+  /** The interface the headline figure came from. A probe is one flow, so it
+   *  crosses exactly one egress interface; anything else moving during the
+   *  sample is unrelated traffic and is reported separately rather than added in. */
+  measured_interface?: string | null;
+  per_interface?: Record<string, { rx_bytes: number; tx_bytes: number }>;
+  source?: string;
+  destination?: string;
+  peers_pinged?: string[];
+  /** False when nothing answered and the counters never moved. */
+  reachable?: boolean;
+  note?: string;
 }
 
 /** Achieved throughput, derived from real /proc/net/dev counter deltas while
  *  the container generates traffic. Not a configured link speed.
  *
- *  `destination` must be a directly adjacent lab device: the backend pings
- *  source -> destination and samples the counters around it, so a remote pair
- *  would measure nothing useful. */
+ *  `destination` is the peer actually pinged. It does not have to be adjacent:
+ *  the counters being sampled are the source container's own, and they move for
+ *  a destination several hops away just as they do for a neighbour. */
 export async function measureBandwidth(
   source: string,
   destination: string,

@@ -77,20 +77,20 @@ export function advancePacket(
     return { packet, cableUpdates };
   }
 
-  // Check packet loss
-  const lossPercent = cable.packetLoss ?? 0;
-  if (Math.random() * 100 < lossPercent) {
+  // A link set to down really breaks the drawn path. That is a fact about the
+  // canvas and can be acted on.
+  if (cable.status === 'down') {
     const droppedPacket: Packet = {
       ...packet,
       status: 'dropped',
       droppedAtHop: packet.currentHop,
-      dropReason: `Packet lost on link (${lossPercent}% loss)`,
+      dropReason: `Link ${cable.fromDeviceId}–${cable.toDeviceId} is set down`,
       logs: [
         ...packet.logs,
         {
           id: `log-${Date.now()}-drop`,
           timestamp: new Date().toLocaleTimeString(),
-          message: `LOST at hop ${packet.currentHop + 1} — link has ${lossPercent}% packet loss`,
+          message: `STOPPED at hop ${packet.currentHop + 1} — link ${cable.fromDeviceId}–${cable.toDeviceId} is set down`,
           type: 'error',
           hop: packet.currentHop,
         },
@@ -223,67 +223,4 @@ export function getPointOnCableForPacket(
   const y2 = toDev.y + 32;
 
   return getPointOnCable(x1, y1, x2, y2, cable.controlPoint, packet.progress);
-}
-
-export function computeMetrics(packets: Packet[], cables: NetworkCable[]): {
-  packetsSent: number;
-  packetsDelivered: number;
-  packetsDropped: number;
-  packetDeliveryRatio: number;
-  averageDelay: number;
-  throughput: number;
-  linkUtilization: number;
-  activeFlows: number;
-  failedLinks: number;
-  averageHopCount: number;
-} {
-  const sent = packets.length;
-  const delivered = packets.filter((p) => p.status === 'success').length;
-  const dropped = packets.filter((p) => p.status === 'dropped' || p.status === 'failed').length;
-  const active = packets.filter((p) => p.status === 'routing' || p.status === 'transmitting').length;
-
-  const deliveryRatio = sent > 0 ? (delivered / sent) * 100 : 0;
-
-  // Average delay from completed packets
-  const completedPackets = packets.filter((p) => p.status === 'success');
-  const avgDelay =
-    completedPackets.length > 0
-      ? completedPackets.reduce((sum, p) => {
-          const duration = Date.now() - p.createdAt;
-          return sum + duration;
-        }, 0) / completedPackets.length
-      : 0;
-
-  // Throughput: delivered packets per second (approximate)
-  const throughput = completedPackets.length > 0 ? (completedPackets.length / Math.max(1, (Date.now() - (completedPackets[0]?.createdAt ?? Date.now())) / 1000)) * 100 : 0;
-
-  // Link utilization: average currentPackets / bandwidth
-  const activeCables = cables.filter((c) => c.status === 'active');
-  const utilization =
-    activeCables.length > 0
-      ? activeCables.reduce((sum, c) => {
-          const bw = c.bandwidth ?? 100;
-          const current = c.currentPackets ?? 0;
-          return sum + Math.min(100, (current / Math.max(1, bw)) * 100);
-        }, 0) / activeCables.length
-      : 0;
-
-  const failedLinks = cables.filter((c) => c.status === 'down').length;
-  const avgHops =
-    completedPackets.length > 0
-      ? completedPackets.reduce((sum, p) => sum + (p.route.length - 1), 0) / completedPackets.length
-      : 0;
-
-  return {
-    packetsSent: sent,
-    packetsDelivered: delivered,
-    packetsDropped: dropped,
-    packetDeliveryRatio: Math.round(deliveryRatio * 10) / 10,
-    averageDelay: Math.round(avgDelay),
-    throughput: Math.round(throughput * 10) / 10,
-    linkUtilization: Math.round(utilization * 10) / 10,
-    activeFlows: active,
-    failedLinks,
-    averageHopCount: Math.round(avgHops * 10) / 10,
-  };
 }
