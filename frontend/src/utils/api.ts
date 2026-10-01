@@ -779,6 +779,45 @@ export interface BandwidthResult {
   note?: string;
 }
 
+export interface LabPingResult {
+  device: string;
+  target: string;
+  source: string;
+  command: string;
+  reachable: boolean;
+  sent: number;
+  received: number;
+  loss_percent: number;
+  rtt_min_ms: number | null;
+  rtt_avg_ms: number | null;
+  rtt_max_ms: number | null;
+  jitter_ms: number | null;
+  /** The per-packet reply lines, in order. */
+  replies: string[];
+  /** The command's unedited stdout. */
+  output: string;
+  exit_code: number;
+}
+
+/** Ping a literal address from a lab router's own container.
+ *
+ *  The designer's CLI asks about whatever address the user types, which is not
+ *  necessarily one the discovery index knows, so it cannot go through the
+ *  source/destination measurement path. */
+export async function pingLabDevice(
+  device: string,
+  target: string,
+  count = 5
+): Promise<LabPingResult> {
+  const response = await fetch(`${API_BASE}/api/lab/ping`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device, target, count }),
+  });
+  if (!response.ok) throw new Error(await describeFailure(response, "ping"));
+  return response.json();
+}
+
 /** Achieved throughput, derived from real /proc/net/dev counter deltas while
  *  the container generates traffic. Not a configured link speed.
  *

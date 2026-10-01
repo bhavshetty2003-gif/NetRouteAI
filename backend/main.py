@@ -24,6 +24,7 @@ Surface:
 """
 
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
@@ -358,7 +359,26 @@ def lab_ping(request: RawPingRequest):
         raise _lab_error(LabUnavailable(f"ping failed: {exc}")) from exc
 
     result["device"] = name
+    result["replies"] = _ping_reply_lines(result.get("raw_output") or "")
+    # The CLI prints this verbatim, so what the terminal shows is the command's
+    # own output rather than something reworded to look like it.
+    result["output"] = result.pop("raw_output", "")
+    result.pop("samples", None)
     return result
+
+
+def _ping_reply_lines(output: str) -> list[str]:
+    """The per-packet reply lines from a ping, in the order they arrived."""
+    lines: list[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        # "64 bytes from 10.0.0.3: seq=0 ttl=64 time=0.204 ms" -- a real reply.
+        if re.search(r"\bbytes from\b", stripped):
+            lines.append(stripped)
+        # busybox's stand-in for an unanswered packet.
+        elif re.search(r"Request timeout for icmp_seq", stripped):
+            lines.append(stripped)
+    return lines
 
 
 def _training_row(source: str, destination: str, measurement: dict, client) -> None:

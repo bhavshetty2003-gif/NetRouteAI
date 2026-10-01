@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { NetworkDevice, NetworkInterface } from '../types/network';
 import { Terminal, X, Maximize2, Minimize2, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { validateIPv4, validateSubnetMask, validateDefaultGateway } from '../utils/validation';
+import { pingLabDevice } from '../utils/api';
 
 interface CiscoCLIModalProps {
   device: NetworkDevice | null;
@@ -43,6 +44,12 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
       setLines([
         { text: `--- NetRouteAI Cisco IOS CLI Simulator [${device.model}] ---`, type: 'output' },
         { text: `System uptime is ${device.uptime}`, type: 'output' },
+        { text: ``, type: 'output' },
+        { text: `Configuration commands act on this device's record in the designer.`, type: 'output' },
+        { text: `'ping' is the exception: it runs a real ping from this router's container`, type: 'output' },
+        { text: `in the lab, and prints that command's own output. With no lab running`, type: 'output' },
+        { text: `there is nothing to ping and it will say so rather than answer.`, type: 'output' },
+        { text: ``, type: 'output' },
         { text: `Press 'help' or '?' for available Cisco commands. Type 'enable' to begin.`, type: 'output' },
         { text: ``, type: 'output' },
       ]);
@@ -480,20 +487,58 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
       return;
     }
 
-    // PING <ip>
+    // PING <ip> -- a real ping against the lab, not a canned transcript.
+    //
+    // This used to print `!!!!!` (which in ping's own notation means 100% loss)
+    // immediately followed by "Success rate is 100 percent (5/5) ...". Both
+    // halves were invented and they contradicted each other, so the terminal
+    // could not be trusted to say anything about reachability. It now runs the
+    // same `ping` the backend runs for every other measurement, from this
+    // device's own container, and prints the real replies. With no lab running
+    // there is nothing to ping and it says so rather than inventing an answer.
     if (mainCmd === 'ping') {
       if (!arg1) {
         newOutput.push({ text: `% Incomplete command: ping <IP_ADDRESS>`, type: 'error' });
-      } else {
-        const pingTarget = parts[1];
-        newOutput.push(
-          { text: `Type escape sequence to abort.`, type: 'output' },
-          { text: `Sending 5, 100-byte ICMP Echos to ${pingTarget}, timeout is 2 seconds:`, type: 'output' },
-          { text: `!!!!!`, type: 'success' },
-          { text: `Success rate is 100 percent (5/5), round-trip min/avg/max = 1/3/4 ms`, type: 'success' }
-        );
+        setLines((prev) => [...prev, ...newOutput]);
+        return;
       }
+
+      const pingTarget = arg1;
+      const count = /repeat\s+(\d+)/i.exec(inputVal)?.[1]
+        ? Number(/repeat\s+(\d+)/i.exec(inputVal)![1])
+        : 5;
+      newOutput.push({ text: `Pinging ${pingTarget} from ${device.name} ...`, type: 'output' });
       setLines((prev) => [...prev, ...newOutput]);
+
+      pingLabDevice(device.id, pingTarget, Math.min(20, Math.max(1, count)))
+        .then((r) => {
+          // Print the command's own output verbatim. Re-rendering it from the
+          // parsed fields is how the terminal and the measurement drift apart.
+          const raw = r.output
+            .split('\n')
+            .map((line) => line.replace(/\r/g, '').trimEnd())
+            .filter(Boolean);
+          setLines((prev) => [
+            ...prev,
+            ...raw.map((text) => ({
+              text,
+              type: (text.includes('%') || /timeouts/i.test(text)
+                ? ('error' as const)
+                : ('output' as const)),
+            })),
+            {
+              text: `${r.sent} packets transmitted, ${r.received} received, ${r.loss_percent.toFixed(0)}% packet loss${r.rtt_avg_ms !== null ? `, round-trip avg ${r.rtt_avg_ms.toFixed(3)} ms` : ''}`,
+              type: r.reachable ? ('success' as const) : ('error' as const),
+            },
+            { text: `(${r.command})`, type: 'output' as const },
+          ]);
+        })
+        .catch((err: unknown) => {
+          setLines((prev) => [
+            ...prev,
+            { text: `% ${err instanceof Error ? err.message : String(err)}`, type: 'error' },
+          ]);
+        });
       return;
     }
 

@@ -352,6 +352,9 @@ def probe_ping(
     parsed["source"] = container_name
     parsed["target"] = target_ip
     parsed["exit_code"] = code
+    # The unedited output, so a caller that wants to show the terminal what
+    # actually came back does not have to reconstruct it from the parsed fields.
+    parsed["raw_output"] = out
     return parsed
 
 
