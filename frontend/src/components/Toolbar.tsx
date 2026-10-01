@@ -23,7 +23,7 @@ interface ToolbarProps {
   selectedCount?: number;
   onSaveTopology: () => void;
   onLoadTopology: () => void;
-  onSelectPreset: (preset: 'default' | 'star' | 'mesh' | 'tree' | 'bus' | 'ring') => void;
+  onSelectPreset: (preset: 'default' | 'star' | 'mesh' | 'tree' | 'bus' | 'ring' | 'twelve') => void;
   onResetCanvas: () => void;
   isSimulating: boolean;
   onSendTopology: () => void;
@@ -197,6 +197,19 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               id="presets-dropdown-menu"
               className="absolute left-0 mt-1 w-44 bg-panel border border-line rounded-xl shadow-xl py-1 z-30 font-medium text-xs text-ink"
             >
+              <button
+                onClick={() => {
+                  onSelectPreset('twelve');
+                  setShowPresetsMenu(false);
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-accent-soft/60 hover:text-accent transition-colors"
+              >
+                12 Routers, 4 Areas
+                <span className="block text-[10px] text-ink-faint font-normal">
+                  Cost, area and address on every link
+                </span>
+              </button>
+              <div className="my-1 border-t border-line" />
               <button
                 onClick={() => {
                   onSelectPreset('default');

@@ -23,6 +23,7 @@ import {
   getRingTopology,
   getTreeTopology,
   getBusTopology,
+  getTwelveRouterTopology,
   createRouterInterfaces,
   createSwitchInterfaces,
   createPCInterfaces,
@@ -68,6 +69,10 @@ import { MonitoringView } from './components/views/MonitoringView';
 import { SettingsModal } from './components/views/SettingsModal';
 
 const LOCAL_STORAGE_KEY = 'netrouteai_topology_v1';
+
+/** Presets offered in the toolbar. `twelve` is the 12-router multi-area
+ *  topology the measurement work was verified against. */
+type PresetName = 'default' | 'star' | 'mesh' | 'tree' | 'bus' | 'ring' | 'twelve';
 
 export default function App() {
   // Navigation - defaults to comprehensive Home landing page
@@ -409,9 +414,12 @@ export default function App() {
   }
 
   // Preset Selection
-  const handleSelectPreset = (preset: 'default' | 'star' | 'mesh' | 'tree' | 'bus' | 'ring') => {
+  const handleSelectPreset = (preset: PresetName) => {
     let newTop: { devices: NetworkDevice[]; cables: NetworkCable[] };
     switch (preset) {
+      case 'twelve':
+        newTop = getTwelveRouterTopology();
+        break;
       case 'star':
         newTop = getStarTopology();
         break;
@@ -439,6 +447,13 @@ export default function App() {
     setIsConnectMode(false);
     setConnectSourceDevice(null);
     setConnectSourceInterface(null);
+    // A different topology means the lab is now out of step with the canvas.
+    // Saying so is the honest state; silently leaving a stale "running" label
+    // would have the analytics page describe a network nobody can see.
+    setLabMessage({
+      kind: 'ok',
+      text: 'Loaded a new topology. Build the lab from this canvas to measure it.',
+    });
   };
 
   // Clear Canvas

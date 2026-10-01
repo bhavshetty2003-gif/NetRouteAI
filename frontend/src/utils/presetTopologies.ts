@@ -849,3 +849,165 @@ export function getBusTopology(): { devices: NetworkDevice[]; cables: NetworkCab
 
   return { devices, cables };
 }
+
+/**
+ * 12 routers across four OSPF areas, with an explicit cost, area and address on
+ * every link. This is the topology the measurement work was verified against, so
+ * it is the one to load when checking that the designer, the lab and the
+ * analytics page agree.
+ *
+ * Areas: 0 backbone (R1, R2, R3, R11, R12), 1 (R4, R5, R6), 2 (R7, R8),
+ * 3 (R9, R10). R2, R3 and R11 hold interfaces in more than one area and so are
+ * area border routers -- non-backbone areas can only reach each other through
+ * area 0, so those three links are what make the topology routable end to end.
+ *
+ * Two links deliberately use non-Class-C addressing (R2-R3 is Class B, R4-R5 is
+ * Class A) so the mask genuinely varies across the topology rather than every
+ * link being a /24 by default.
+ */
+export function getTwelveRouterTopology(): { devices: NetworkDevice[]; cables: NetworkCable[] } {
+  const AREA_PLAN: Array<{ id: string; area: number; x: number; y: number }> = [
+    { id: 'R1', area: 0, x: 250, y: 120 },
+    { id: 'R2', area: 0, x: 250, y: 330 },
+    { id: 'R3', area: 0, x: 250, y: 540 },
+    { id: 'R4', area: 1, x: 560, y: 300 },
+    { id: 'R5', area: 1, x: 850, y: 210 },
+    { id: 'R6', area: 1, x: 850, y: 400 },
+    { id: 'R7', area: 2, x: 560, y: 620 },
+    { id: 'R8', area: 2, x: 850, y: 600 },
+    { id: 'R9', area: 3, x: 560, y: 820 },
+    { id: 'R10', area: 3, x: 850, y: 800 },
+    { id: 'R11', area: 0, x: 60, y: 560 },
+    { id: 'R12', area: 0, x: 60, y: 300 },
+  ];
+
+  // Explicit plan, kept identical to the one the lab was deployed from. Order
+  // matters: it fixes which interface each link lands on, and therefore the
+  // areas and costs the routers end up reporting.
+  const LINK_PLAN: Array<{
+    id: string;
+    source: string;
+    target: string;
+    cost: number;
+    area: number;
+    addressClass: 'A' | 'B' | 'C';
+    subnet: string;
+    mask: string;
+    sourceIp: string;
+    targetIp: string;
+  }> = [
+    { id: 'l1', source: 'R1', target: 'R2', cost: 10, area: 0, addressClass: 'C', subnet: '192.168.0.0/24', mask: '255.255.255.0', sourceIp: '192.168.0.2', targetIp: '192.168.0.3' },
+    { id: 'l2', source: 'R1', target: 'R12', cost: 5, area: 0, addressClass: 'C', subnet: '192.168.1.0/24', mask: '255.255.255.0', sourceIp: '192.168.1.2', targetIp: '192.168.1.3' },
+    { id: 'l3', source: 'R2', target: 'R3', cost: 10, area: 0, addressClass: 'B', subnet: '172.16.0.0/16', mask: '255.255.0.0', sourceIp: '172.16.0.2', targetIp: '172.16.0.3' },
+    { id: 'l4', source: 'R2', target: 'R11', cost: 15, area: 0, addressClass: 'C', subnet: '192.168.2.0/24', mask: '255.255.255.0', sourceIp: '192.168.2.2', targetIp: '192.168.2.3' },
+    { id: 'l5', source: 'R11', target: 'R12', cost: 8, area: 0, addressClass: 'C', subnet: '192.168.3.0/24', mask: '255.255.255.0', sourceIp: '192.168.3.2', targetIp: '192.168.3.3' },
+    { id: 'l6', source: 'R2', target: 'R4', cost: 20, area: 1, addressClass: 'C', subnet: '192.168.4.0/24', mask: '255.255.255.0', sourceIp: '192.168.4.2', targetIp: '192.168.4.3' },
+    { id: 'l7', source: 'R4', target: 'R5', cost: 10, area: 1, addressClass: 'A', subnet: '10.0.0.0/8', mask: '255.0.0.0', sourceIp: '10.0.0.2', targetIp: '10.0.0.3' },
+    { id: 'l8', source: 'R4', target: 'R6', cost: 10, area: 1, addressClass: 'C', subnet: '192.168.5.0/24', mask: '255.255.255.0', sourceIp: '192.168.5.2', targetIp: '192.168.5.3' },
+    { id: 'l9', source: 'R3', target: 'R7', cost: 20, area: 2, addressClass: 'C', subnet: '192.168.6.0/24', mask: '255.255.255.0', sourceIp: '192.168.6.2', targetIp: '192.168.6.3' },
+    { id: 'l10', source: 'R7', target: 'R8', cost: 10, area: 2, addressClass: 'C', subnet: '192.168.7.0/24', mask: '255.255.255.0', sourceIp: '192.168.7.2', targetIp: '192.168.7.3' },
+    { id: 'l11', source: 'R3', target: 'R8', cost: 12, area: 2, addressClass: 'C', subnet: '192.168.8.0/24', mask: '255.255.255.0', sourceIp: '192.168.8.2', targetIp: '192.168.8.3' },
+    { id: 'l12', source: 'R3', target: 'R9', cost: 15, area: 3, addressClass: 'C', subnet: '192.168.9.0/24', mask: '255.255.255.0', sourceIp: '192.168.9.2', targetIp: '192.168.9.3' },
+    { id: 'l13', source: 'R9', target: 'R10', cost: 10, area: 3, addressClass: 'C', subnet: '192.168.10.0/24', mask: '255.255.255.0', sourceIp: '192.168.10.2', targetIp: '192.168.10.3' },
+    { id: 'l14', source: 'R11', target: 'R10', cost: 25, area: 3, addressClass: 'C', subnet: '192.168.11.0/24', mask: '255.255.255.0', sourceIp: '192.168.11.2', targetIp: '192.168.11.3' },
+  ];
+
+  // A router's headline address is the lowest one on its links, which is the
+  // same rule the backend uses, so the canvas and the plan agree by construction.
+  const headline = new Map<string, { ip: string; mask: string }>();
+  for (const link of LINK_PLAN) {
+    for (const [router, ip] of [
+      [link.source, link.sourceIp],
+      [link.target, link.targetIp],
+    ] as const) {
+      const current = headline.get(router);
+      if (!current || ip.localeCompare(current.ip, undefined, { numeric: true }) < 0) {
+        headline.set(router, { ip, mask: link.mask });
+      }
+    }
+  }
+
+  const devices: NetworkDevice[] = AREA_PLAN.map((spec, index) => {
+    const own = headline.get(spec.id)!;
+    const degree = LINK_PLAN.filter((l) => l.source === spec.id || l.target === spec.id).length;
+    const dev: NetworkDevice = {
+      id: spec.id,
+      name: spec.id,
+      type: 'router',
+      x: spec.x,
+      y: spec.y,
+      ipAddress: own.ip,
+      subnetMask: own.mask,
+      gateway: '',
+      macAddress: `00:1B:D4:6C:00:${(index + 1).toString(16).padStart(2, '0')}`,
+      // One interface per link, because each link terminates on a real
+      // interface on each of its two routers.
+      interfaces: [],
+      model: 'Cisco 2901',
+      iosVersion: '15.4(3)M',
+      uptime: '12 days',
+      status: 'running',
+      cliConfig: { hostname: spec.id, history: ['enable'] },
+      ospfArea: spec.area,
+    };
+    // Placeholder identities only; the real ones come from the deployed plan.
+    for (let port = 0; port < degree; port++) {
+      dev.interfaces.push({
+        id: `Gi0/${port}`,
+        name: `GigabitEthernet0/${port}`,
+        ipAddress: 'unassigned',
+        subnetMask: own.mask,
+        status: 'up',
+        macAddress: `00:1B:D4:6C:${(index + 1).toString(16).padStart(2, '0')}:${port.toString(16).padStart(2, '0')}`,
+        connectedTo: null,
+      });
+    }
+    return dev;
+  });
+
+  const cables: NetworkCable[] = [];
+  for (const link of LINK_PLAN) {
+    const source = devices.find((d) => d.id === link.source)!;
+    const target = devices.find((d) => d.id === link.target)!;
+    const sourcePort = source.interfaces.find((i) => !i.connectedTo);
+    const targetPort = target.interfaces.find((i) => !i.connectedTo);
+    if (!sourcePort || !targetPort) continue;
+
+    // The addresses live on the interfaces too, not only on the link, so
+    // anywhere the UI shows an interface it shows the IP the router holds.
+    sourcePort.ipAddress = link.sourceIp;
+    sourcePort.subnetMask = link.mask;
+    targetPort.ipAddress = link.targetIp;
+    targetPort.subnetMask = link.mask;
+    sourcePort.connectedTo = {
+      deviceId: target.id,
+      interfaceId: targetPort.id,
+      cableId: link.id,
+    };
+    targetPort.connectedTo = {
+      deviceId: source.id,
+      interfaceId: sourcePort.id,
+      cableId: link.id,
+    };
+
+    cables.push({
+      id: link.id,
+      fromDeviceId: link.source,
+      fromPort: sourcePort.id,
+      toDeviceId: link.target,
+      toPort: targetPort.id,
+      controlPoint: null,
+      status: 'active',
+      cableType: 'crossover',
+      addressClass: link.addressClass,
+      subnet: link.subnet,
+      subnetMask: link.mask,
+      sourceIp: link.sourceIp,
+      targetIp: link.targetIp,
+      ospfArea: link.area,
+      cost: link.cost,
+    });
+  }
+
+  return { devices, cables };
+}
