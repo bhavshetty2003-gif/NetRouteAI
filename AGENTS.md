@@ -10,7 +10,7 @@ Multi-package monorepo — each subproject has its own dependency manifest:
 | `backend/` | FastAPI backend — lab metrics collection, routing, analytics, Docker/FRR generation, RF training pipeline |
 | `ai/` | DQN reinforcement-learning routing model (stable-baselines3, gymnasium) — **not** used by the analytics page |
 | `network/` | Mininet topology scripts (`topologies/*.py`; `run.sh` is empty) |
-| `enterprise-ospf-lab/` | Pre-built 12-router multi-area OSPF lab — the live measurement target |
+| `enterprise-ospf-lab/` | Pre-built 12-router multi-area OSPF lab — an explicit **fallback** measurement target, not the default |
 | `ospf-lab/` | 8-router OSPF lab |
 | `shortest-path-demo/` | 5-router shortest-path demo |
 | `scripts/` | Maintenance utilities (`migrate_theme.py`, `audit_contrast.py`) |
@@ -39,11 +39,21 @@ python test_training.py   # verify training pipeline (no Docker needed)
 
 ### Live lab (required for the analytics page)
 
+The lab is normally **built from the topology you drew in the designer**, via
+`POST /api/lab/deploy` (the "Deploy" button on `LabDeployBar`). That is the
+point of the design: what the canvas shows is what gets measured.
+
 ```bash
+# Or, as an explicit fallback, the pre-built lab:
+curl -X POST http://127.0.0.1:8000/api/lab/deploy/enterprise
+# equivalently:
 cd enterprise-ospf-lab && docker compose up -d
 ```
 
-The backend discovers this lab dynamically; there is no hardcoded topology.
+Generated labs land in `backend/labs/current/` (compose file + per-router FRR
+config + `plan.json`), which is **gitignored** — it is output, not source.
+The backend discovers whatever is running dynamically; there is no hardcoded
+topology, and the generated lab is the one it finds first.
 
 ### AI (`ai/`)
 
@@ -70,14 +80,25 @@ python3 scripts/audit_contrast.py   # WCAG check of every design-token pairing; 
 
 ## API Endpoints
 
+### Deploying the drawn topology, then measuring it
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/lab/plan` | Resolve addresses, costs and areas **without touching Docker** |
+| POST | `/api/lab/deploy` | Make the drawn topology the running lab (the current lab) |
+| GET | `/api/lab/deploy` | What is deployed, and whether the lab has drifted from the canvas |
+| POST | `/api/lab/deploy/enterprise` | Bring up `enterprise-ospf-lab` as an explicit fallback |
+| POST | `/api/lab/deploy/teardown` | Stop and remove the generated lab |
+
 ### Live lab measurement (Docker/FRR)
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/lab/status` | Discovered devices, links, OSPF cost histogram |
+| POST | `/api/lab/ping` | `ping` a **literal IP** from one router's container (the CLI's path) |
 | POST | `/api/lab/measure` | `ping` + `traceroute` between two devices |
 | POST | `/api/lab/bandwidth` | Achieved throughput from `/proc/net/dev` counter deltas |
-| POST | `/api/lab/impair` | `tc` netem/tbf injection (delay, loss, jitter, corrupt, rate limit) |
+| POST | `/api/lab/impair` | `tc` netem/tbf injection; `{"clear": true}` to remove it |
 | POST | `/api/lab/link` | `ip link set dev … down/up` for link failure |
 | POST | `/api/lab/traffic` | Start/stop a detached `ping` loop so interface counters actually move |
 | GET | `/api/lab/traffic` | Which devices are currently generating traffic |
@@ -111,11 +132,19 @@ The designer canvas (route discovery, packet animation) still runs client-side v
 
 **The Analytics view is backend-driven and scoped to the drawn topology.** `components/views/AnalyticsView.tsx` takes the designer's `devices` as a prop and filters the discovered lab down to the routers that appear in **both** the topology and the running lab: those are the only source/destination options, and the OSPF area table is filtered the same way. With no routers on the canvas the page shows a "no topology to analyse" state and fetches nothing. Everything measured still comes over `src/utils/api.ts` from `/api/lab/status`, `/api/analytics/live`, `/api/lab/reachability`, `/api/lab/route`, `/api/dataset`, and `/api/lab/bandwidth`. It shows loading, lab-offline, error, and unreachable-diagnosis states. Every displayed number is measured; the "How these numbers were produced" panel prints the actual commands. It carries a routing-method selector (**OSPF / AI (Random Forest) only**) with an "Apply to lab" action that installs static routes, a hop-by-hop table of the traced packet path, and a reachability hint under each source/destination select.
 
-**Dead code — do not build on it:** `ai/` DQN model is not referenced by any backend endpoint; `backend/generated/` is generator output only.
+**Dead code — do not build on it:** `ai/` DQN model is not referenced by any backend endpoint; `backend/generated/` is generator output only; `computeMetrics` and `SimulationMetricsPanel` were removed, and `MonitoringView` is now backed by real `/api/lab/metrics` counters with `POST /api/lab/link` doing the toggling.
+
+**`MonitoringView` describes the canvas ∩ lab like Analytics does.** It is passed the canvas `devices` and filters the lab sweep down to routers present in both, because a canvas-only router has no container to read and a lab-only router is not part of the topology being monitored. With no lab it says so rather than showing zeroes, which would be indistinguishable from a healthy idle network.
 
 ## Non-Obvious Facts
 
+- **The addresses on the canvas and in the lab are the same addresses.** The canvas does not invent an IP: `POST /api/lab/plan` and `POST /api/lab/deploy` both run the same `resolve_plan`, and the designer adopts the returned plan onto its own state. Anything already set on a link is sent through and honoured; only blanks are filled. That is the whole guarantee — an IP the UI shows is the IP the routers get because it *is* the backend's allocation, not a second derivation that could disagree.
+- **Addressing is classful and the mask is derived, never typed.** A link's `address_class` (A/B/C) fixes the mask: A → `/8`, B → `/16`, C → `/24`. Each class draws from a **disjoint** block — A from first octet 10+, B from 172.16/18+, C from 192.168.x — so a Class A link can never collide with a Class C one.
+- **The allocator is stateless, which is what makes deletion free.** A subnet is "taken" only by the topology currently being planned, and each class scans its candidates from the start. There is no pool to drain and nothing to release, so deleting a link or a router hands its address straight back to the next link that needs one. Verified: deleting link l5 (R11–R12, `192.168.3.0/24`) gives `192.168.3.0/24` to the next link, deleting router R12 releases both its subnets, and drawing R12 back returns both.
+- **A link with no area of its own inherits its source router's area**, and each router gets one headline `ip` (its lowest interface address) which no two routers may present at once.
+- **Deploy never restarts the lab.** Config is pushed into the running `vtysh` and read back from `show ip ospf interface`; the verification is a read-back, not an exit status, because FRR rejects some lines and still exits 0.
 - **The analytics page must never show a hardcoded value.** Every figure traces back to a command run inside a lab container. `scripts/audit_contrast.py` guards the colour side; measurement provenance is printed in the UI itself.
+- **End-to-end measurement sends 12 ICMP requests, not 6**, and reports `loss_resolution_percent` (1/N) — 6 packets cannot express a loss below 17%, so one drop read as a sixth of the traffic lost.
 - **The routing-method selector changes the data plane, it does not relabel a column.** `POST /api/lab/route` installs a static route **per hop** (not just on the source) and static routes beat OSPF, so FRR really forwards the chosen path. Pinning only the source was tried and is insufficient: R1→R2 gave `R1→R2→R3→R12→R11` because R2's own OSPF still chose its own way onward.
 - **Analytics is gated on the topology, and its endpoints are the topology ∩ lab.** `AnalyticsView` is passed the canvas `devices`; source/destination and the OSPF area table list only routers present in **both**, because a canvas-only router has nothing to measure and a lab-only router is not part of the network being analysed. Clearing the canvas (`setDevices([])`) removes them and shows the empty state instead of lab-wide figures, and the ~28s full-matrix `/api/lab/reachability` sweep is not fired at all in that state. The default seeded topology only contains R1/R2, so on a fresh project the page correctly offers just those two.
 - **Dijkstra is no longer a selectable routing method.** The textbook SPF path was removed from the analytics selector *and* from `ROUTING_METHODS`/`compare_ospf_vs_ai`: it is a modelled baseline the routers cannot be asked to run (OSPF charges cost on each router's own outgoing interface, so it differs from what FRR forwards) and it usually duplicated the AI path, making it an unhelpful third column. `ospf_path()` survives only as a labelled fallback when the OSPF RIB and traceroute both fail to identify the live path — and the OSPF route's basis string now says "modelled shortest path" so the word Dijkstra cannot reappear in the UI. `POST /api/lab/route` rejects `dijkstra` with a clean 503 (`path_for_method` raises `LabUnavailable`, which the handler converts rather than leaking a 500).
@@ -130,7 +159,15 @@ The designer canvas (route discovery, packet animation) still runs client-side v
 - Area state is read from `show ip ospf interface`, not from `frr.conf`: an interface only appears there once OSPF is operational, so a configured-but-down interface is correctly reported as absent instead of as being in area 0. ABR status is derived from actually holding interfaces in >1 area, not asserted.
 - Changing an interface's area is a routing change: OSPF only forms adjacencies between interfaces in the **same** area, so moving one side leaves the far side routing to nothing until it follows. `/api/lab/ospf/area` requires a `preview: true` call first, which reports the currently-reachable pairs that pass through the router; an un-previewed apply is refused. Neighbours take one dead-timer interval (40s) to re-form.
 - **Interface counters only move when packets flow**, which is why the live matrices looked broken on an idle lab. `backend/traffic.py` starts a `ping` loop backgrounded *inside* the container with `&` and echoes `$!` for the PID. `exec_run(detach=True)` is **not** usable here: it returns `None` for `exit_code`, so there is nothing to confirm the start and no PID to stop — an early attempt using it leaked pings that kept inflating counters long after the API reported failure. A partially-started generator now kills what it did start rather than leaving the lab half-loaded.
-- Throughput requires an **adjacent** peer — `/api/lab/bandwidth` pings source→destination and samples counters around it, so a remote pair measures nothing. It also requires `destination` in the body; omitting it returns 422.
+- **Throughput does not require an adjacent peer, and the requested destination is the one measured.** `/api/lab/bandwidth` used to ignore `destination` entirely and ping every adjacent peer, and the analytics page substituted the source's nearest transit neighbour — so the figure sat beside a latency/loss/hop count for a *different* pair. Adjacency was never actually necessary: the counters being sampled are the source container's own, and they move for a remote destination exactly as for a neighbour (R1→R9 across three hops and two areas moved 822 KB in the same 2 s sample that R1→R2 did). The "a remote pair measures nothing" belief was describing the bug.
+- **Throughput needs a heavy stimulus or it measures the packet rate.** `ping -i 0.05` on default 84-byte echo requests offers only ~0.03 Mbps of load. `measure_bandwidth` now sends `ping -s 4000 -i 0.01` (~6.6 Mbps of real bytes) and falls back to the plain form if the container refuses it, so a reported zero means nothing was forwarded rather than that a flag was too fast. rx+tx are also taken from the **busiest single interface** (`measured_interface`, with `per_interface` alongside) rather than summed across every interface, since a probe is one flow crossing one egress link and anything else moving is unrelated traffic. Verified responsive to shaping: R12→R5 reads 6.576 Mbps, 3.411 Mbps under `tc tbf rate 2mbit` on R12/eth0, 6.576 Mbps cleared.
+- **The training data used to contain two fabricated columns.** `POST /api/lab/measure` and `dataset_collector` both wrote `bandwidth_mbps` as a constant (the impairment profile's configured tbf rate, or a flat 1000 when there was none) and set `total_cost` to the hop count. A Random Forest handed two constant columns learns nothing from them, so any confidence derived from them was noise. Both are read for real now: throughput from the counter deltas around the measurement, cost from the live `ip ospf cost` of each interface on the traced path (`_training_row` in `main.py` shares `dataset_collector`'s `_path_cost` / `_congestion_from` / `_path_queue_state`). A row that cannot produce a throughput number is **skipped**, not written with a placeholder.
+- **"Select OSPF" and "revert to OSPF" are the same operation.** `POST /api/lab/route` used to short-circuit on `method: "ospf"` and report "OSPF is what the routers already forward with nothing injected" *without checking whether anything was injected*. The pinning static routes stayed on every hop and the routers kept forwarding the deselected AI path while the response claimed no change was needed. `apply: false` and `method: "ospf"` now share the removal path. Correspondingly the UI enables "Revert to OSPF" whenever the routers are forwarding something other than the OSPF path — which includes the exact state where OSPF is selected *because* steering to AI left it in effect — and disables "Apply to lab" for OSPF with an explanation.
+- **A newly drawn link is planned automatically.** `App.tsx` fires `POST /api/lab/plan` as soon as any drawn link has no address, so the canvas shows the backend's own allocation before a deploy is possible. The trigger is the *set* of unaddressed link ids, remembered across attempts, so a backend refusal does not re-fire on every render.
+- **The CLI's `ping` is real; the rest of the CLI is a simulator.** It used to print `!!!!!` (ping's own notation for 100% loss) followed by "Success rate is 100 percent (5/5), round-trip min/avg/max = 1/3/4 ms" for every target — invented and self-contradictory. It now calls `POST /api/lab/ping` and prints that command's unedited output plus the parsed summary. The endpoint exists because a terminal is asked about a literal address, which the source/destination measurement path cannot express.
+- **The landing page reports the lab.** `HomeView` used to claim a convergence of "< 0.4ms", bridges "br-net0 ... br-net4", daemons "ospfd / bgpd" (only ospfd is ever configured), latency "18.8 ms" vs an AI "12.4 ms (-34%)" at "0.00%" loss, a telemetry deck of "-34.2%" and "0.8 ms" jitter, and a canned `show ip route ospf` transcript. Both cards now read `/api/lab/status`, `/api/lab/ospf/areas` and `/api/dataset`, each settled independently so a lab that is down does not hide the model stats.
+- **Interface names are unstable across Docker restarts.** Never restart the generated lab after configuring it — re-apply the config instead, or the interfaces the FRR config refers to will not be the ones that exist.
+- **`exec_run(demux=True)` returns a namedtuple whose `.output` is a `(stdout, stderr)` tuple.** Use `metrics_collector._demux()` / `lab_topology._exec_stdout()` rather than treating it as a string.
 - **Token values in `frontend/src/index.css` are hex, not oklch()**, so contrast is auditable by `scripts/audit_contrast.py` with exact sRGB math and no colour-space conversion. Re-run that script after any token change.
 - `scripts/migrate_theme.py` is the one-off class migration that moved the UI from the broken light/dark mix onto the tokens. It is idempotent-by-exhaustion (the patterns are gone), kept for reference.
 - `backend/ospf_ai_service.py` reads the OSPF path from the **live network**, never from a hand-rolled SPF. The modelled undirected Dijkstra picks a different path than the routers actually forward, because OSPF charges cost on each router's own outgoing interface, so it is retained only as a labelled fallback. Two live sources are used: `ospf_rib_path()` (authoritative) and `real_ospf_path()` (traceroute, fallback + `path_taken` ground truth).
@@ -148,3 +185,5 @@ The designer canvas (route discovery, packet animation) still runs client-side v
 - `DISABLE_HMR=true` disables Vite HMR and file watching (used in AI Studio to prevent flickering during agent edits). Configured in `vite.config.ts` — do not remove.
 - `backend/training_data.db` has an `origin` column (`measured` vs `synthetic`); `network_metrics` also holds the balanced synthetic seed.
 - `frontend/src/utils/api.ts` sets `API_BASE = "http://127.0.0.1:8000"` and surfaces the real FastAPI `detail` via `describeFailure()` rather than a generic "failed".
+- `python` is not on PATH; use `backend/venv/bin/python` (3.14). `pkill -f "uvicorn main:app"` kills its own shell — stop the API by its pidfile instead.
+- Layout is verifiable without a browser via a jsdom harness under `/tmp/opencode/` run with `frontend/node_modules/.bin/tsx`: mount the component, stub `globalThis.fetch`, and `await act()` until the loading flags clear. **Capture the real `fetch` into a variable before replacing it** or the shim recurses into itself, and **strip the query and the `API_BASE` origin** (`new URL(u, base).pathname`) or you request a malformed URL and mistake a harness bug for a product one.
