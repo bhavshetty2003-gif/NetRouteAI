@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Brain, X, XCircle } from 'lucide-react';
 import {
   ActiveNavTab,
@@ -28,9 +28,23 @@ import {
   createPCInterfaces,
 } from './utils/presetTopologies';
 import { discoverRoute } from './utils/networkRouting';
-import { uploadTopology, getAiRouteRecommendation, AiRouteRecommendation } from './utils/api';
+import {
+  uploadTopology,
+  getAiRouteRecommendation,
+  deployLab,
+  deployEnterpriseLab,
+  getDeployState,
+  previewAddresses,
+  teardownDeployedLab,
+  type AddressClass,
+  type AiRouteRecommendation,
+  type DeployResult,
+  type DeployState,
+  type DeployTopologyPayload,
+} from './utils/api';
 import { createPacket, advancePacket, computeMetrics } from './utils/simulationEngine';
-import { SimulationMetricsPanel } from './components/SimulationMetricsPanel';
+import { LiveMetricsPanel } from './components/LiveMetricsPanel';
+import { LabDeployBar } from './components/LabDeployBar';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
@@ -186,6 +200,13 @@ export default function App() {
 
   // Settings Modal State
   const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
+
+  // Lab deploy state — the drawn topology becomes the lab that gets measured
+  const [plan, setPlan] = useState<DeployResult | null>(null);
+  const [deployState, setDeployState] = useState<DeployState | null>(null);
+  const [isPlanning, setIsPlanning] = useState<boolean>(false);
+  const [isDeploying, setIsDeploying] = useState<boolean>(false);
+  const [labMessage, setLabMessage] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
 
   // Packet Simulation State (legacy single-packet, kept for compatibility)
   const [simulationState, setSimulationState] = useState<PacketSimulationState>({
@@ -580,9 +601,218 @@ export default function App() {
     setDevices((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
   };
 
+  /* ------------------------------------------------------------------ */
+  /* Building the lab from the drawn topology                           */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * The canvas is the source of truth. Addresses already held on a link are
+   * sent verbatim so an existing link keeps its IP across edits, and a link
+   * with no address yet is left blank for the backend to allocate. Costs and
+   * areas come from the same place, which is what makes the lab match what the
+   * user drew rather than a fixed reference topology.
+   */
+  const buildDeployPayload = useCallback((): DeployTopologyPayload => {
+    const routerIds = new Set(devices.filter((d) => d.type === 'router').map((d) => d.id.toUpperCase()));
+    const areaById = new Map(
+      devices.map((d) => [d.id.toUpperCase(), d.ospfArea ?? 0] as const)
+    );
+    return {
+      routers: devices
+        .filter((d) => d.type === 'router')
+        .map((d) => ({
+          id: d.id,
+          name: d.name,
+          type: d.type,
+          area: areaById.get(d.id.toUpperCase()) ?? 0,
+        })),
+      links: cables
+        .filter((c) => routerIds.has(c.fromDeviceId.toUpperCase()) && routerIds.has(c.toDeviceId.toUpperCase()))
+        .map((c) => ({
+          id: c.id,
+          source: c.fromDeviceId,
+          target: c.toDeviceId,
+          cost: c.cost ?? 10,
+          // A link with no area of its own inherits its source router's, so
+          // setting an area on a router covers the links it starts.
+          area: c.ospfArea ?? areaById.get(c.fromDeviceId.toUpperCase()) ?? 0,
+          address_class: (c.addressClass as AddressClass) || 'C',
+          source_ip: c.sourceIp,
+          target_ip: c.targetIp,
+          subnet: c.subnet,
+        })),
+    };
+  }, [devices, cables]);
+
+  /**
+   * Write the backend's plan onto the canvas. The lab is configured from
+   * exactly this plan, so adopting it is what guarantees the designer and the
+   * routers show the same IP rather than two independently-derived ones.
+   */
+  const adoptPlan = useCallback((result: DeployResult) => {
+    setPlan(result);
+    const byId = new Map(result.links.map((l) => [l.id, l] as const));
+    setCables((prev) =>
+      prev.map((c) => {
+        const allocated = byId.get(c.id);
+        if (!allocated) {
+          // Its link is gone from the plan, so its address is released and the
+          // canvas stops claiming to hold it.
+          const { subnet, subnetMask, sourceIp, targetIp, ...rest } = c;
+          return rest as NetworkCable;
+        }
+        return {
+          ...c,
+          subnet: allocated.subnet,
+          subnetMask: allocated.mask,
+          addressClass: (allocated.address_class as AddressClass) || c.addressClass,
+          sourceIp: allocated.source_ip,
+          targetIp: allocated.target_ip,
+          cost: allocated.cost,
+        };
+      })
+    );
+    const routerIp = new Map(result.routers.map((r) => [r.id.toUpperCase(), r] as const));
+    setDevices((prev) =>
+      prev.map((d) => {
+        const deployed = routerIp.get(d.id.toUpperCase());
+        if (!deployed) return d;
+        return {
+          ...d,
+          ipAddress: deployed.ip || d.ipAddress,
+          subnetMask:
+            result.links.find(
+              (l) => l.source === deployed.id || l.target === deployed.id
+            )?.mask || d.subnetMask,
+        };
+      })
+    );
+  }, []);
+
+  // Allocate addresses without starting anything, so a link shows a real IP as
+  // soon as it is drawn rather than after a two-minute deploy.
+  const handlePlanAddresses = useCallback(async () => {
+    setIsPlanning(true);
+    setLabMessage(null);
+    try {
+      adoptPlan(await previewAddresses(buildDeployPayload()));
+      setLabMessage({ kind: 'ok', text: 'Addresses allocated. Deploy to put them on the routers.' });
+    } catch (err) {
+      setLabMessage({ kind: 'bad', text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setIsPlanning(false);
+    }
+  }, [buildDeployPayload, adoptPlan]);
+
+  const handleDeploy = useCallback(async () => {
+    setIsDeploying(true);
+    setLabMessage(null);
+    try {
+      const result = await deployLab(buildDeployPayload());
+      adoptPlan(result);
+      setLabMessage({
+        kind: 'ok',
+        text: `Lab built from this canvas: ${result.routers.length} routers, ${result.links.length} links, areas ${result.areas.join(', ')}. Every address, cost and area was read back from the routers before this returned.`,
+      });
+      setDeployState({
+        source: 'designer',
+        running: true,
+        plan: { routers: result.routers, links: result.links, areas: result.areas },
+        interfaces: result.interfaces,
+      });
+    } catch (err) {
+      setLabMessage({ kind: 'bad', text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setIsDeploying(false);
+    }
+  }, [buildDeployPayload, adoptPlan]);
+
+  const handleTeardown = useCallback(async () => {
+    setIsDeploying(true);
+    setLabMessage(null);
+    try {
+      const result = await teardownDeployedLab();
+      setLabMessage({
+        kind: 'ok',
+        text: result.removed ? 'Lab removed.' : `Nothing to remove. ${result.detail}`,
+      });
+      setDeployState({ source: null, running: false, plan: null, interfaces: null });
+    } catch (err) {
+      setLabMessage({ kind: 'bad', text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setIsDeploying(false);
+    }
+  }, []);
+
+  const handleDeployEnterprise = useCallback(async () => {
+    setIsDeploying(true);
+    setLabMessage(null);
+    try {
+      await deployEnterpriseLab();
+      setLabMessage({
+        kind: 'ok',
+        text: 'The fixed enterprise-ospf-lab is running. Its addresses are its own, not this canvas — deploy the canvas to measure this topology instead.',
+      });
+      setDeployState({ source: 'enterprise-ospf-lab', running: true, plan: null, interfaces: null });
+      setPlan(null);
+    } catch (err) {
+      setLabMessage({ kind: 'bad', text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setIsDeploying(false);
+    }
+  }, []);
+
+  // Adopt whatever plan the running lab was actually built from, so a page
+  // reload shows the addresses the routers hold rather than the defaults.
+  useEffect(() => {
+    let cancelled = false;
+    getDeployState()
+      .then((state) => {
+        if (cancelled) return;
+        setDeployState(state);
+        if (state.source === 'designer' && state.plan) {
+          setPlan({ ...state.plan, ok: true, lab_dir: '', replaced_containers: [], interfaces: state.interfaces || {} });
+        }
+      })
+      .catch(() => {
+        /* no lab deployed yet */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Whether the lab is the drawn topology or the fixed fallback. Analytics and
+  // live metrics describe a different network when it is the fallback, and the
+  // UI has to say so rather than quietly reporting the wrong routers' numbers.
+  const labMatchesCanvas = useMemo(() => {
+    if (!deployState) return true;
+    if (deployState.source === 'enterprise-ospf-lab') return false;
+    if (!deployState.plan) return true;
+    const planned = new Set(deployState.plan.routers.map((r) => r.id.toUpperCase()));
+    const onCanvas = devices.filter((d) => d.type === 'router').map((d) => d.id.toUpperCase());
+    if (planned.size !== onCanvas.length) return false;
+    return onCanvas.every((id) => planned.has(id));
+  }, [deployState, devices]);
+
+  /** Addresses and areas the running lab reports for a router. */
+  const deployedRouter = useCallback(
+    (deviceId: string) => {
+      if (!deployState?.plan || deployState.source !== 'designer') return null;
+      return deployState.plan.routers.find((r) => r.id.toUpperCase() === deviceId.toUpperCase()) || null;
+    },
+    [deployState]
+  );
+
+  const deployedLink = useCallback(
+    (cableId: string) => deployState?.plan?.links.find((l) => l.id === cableId) || null,
+    [deployState]
+  );
+
   // Delete Device
   const handleDeleteDevice = (deviceId: string) => {
-    // Remove attached cables
+    // Removing the device also removes its links, and a link holds its address,
+    // so the address goes back into circulation for whatever is drawn next.
     setCables((prev) =>
       prev.filter((c) => c.fromDeviceId !== deviceId && c.toDeviceId !== deviceId)
     );
@@ -1085,6 +1315,20 @@ export default function App() {
               onToggleMarqueeMode={() => setIsMarqueeMode(!isMarqueeMode)}
             />
 
+            <LabDeployBar
+              routerCount={devices.filter((d) => d.type === 'router').length}
+              linkCount={cables.length}
+              deployState={deployState}
+              matchesCanvas={labMatchesCanvas}
+              isBusy={isDeploying}
+              isPlanning={isPlanning}
+              message={labMessage}
+              onPlan={handlePlanAddresses}
+              onDeploy={handleDeploy}
+              onTeardown={handleTeardown}
+              onDeployEnterprise={handleDeployEnterprise}
+            />
+
             {/* Core Designer 3-Column Split: Device Palette | Canvas | Properties Panel */}
             <div className="relative flex-1 flex h-full overflow-hidden">
               {/* Device Palette */}
@@ -1280,6 +1524,10 @@ export default function App() {
                 <CablePropertiesPanel
                   cable={cables.find((c) => c.id === selectedCableId) || null}
                   onUpdateCable={handleUpdateCable}
+                  allocatedSubnet={deployedLink(selectedCableId)?.subnet}
+                  allocatedSourceIp={deployedLink(selectedCableId)?.source_ip}
+                  allocatedTargetIp={deployedLink(selectedCableId)?.target_ip}
+                  allocatedMask={deployedLink(selectedCableId)?.mask}
                 />
               ) : selectedDeviceId ? (
                 <DevicePropertiesPanel
@@ -1291,9 +1539,16 @@ export default function App() {
                     setCliModalOpen(true);
                   }}
                   onAddInterface={handleAddInterface}
+                  deployedIp={deployedRouter(selectedDeviceId)?.ip}
+                  deployedArea={deployedRouter(selectedDeviceId)?.area}
                 />
               ) : (
-                <SimulationMetricsPanel packets={packets} cables={cables} />
+                <LiveMetricsPanel
+                  devices={devices}
+                  cables={cables}
+                  packets={packets}
+                  deployedRouterIds={deployState?.plan?.routers.map((r) => r.id)}
+                />
               )}
             </div>
           </div>

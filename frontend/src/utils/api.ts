@@ -291,9 +291,14 @@ export interface RouteReport {
   hops: Array<{ hop: number; address: string | null; device: string | null; rtt_ms: number | null }>;
   links: PathLink[];
   computed: {
-    bandwidth: number;
-    latency: number;
-    packet_loss: number;
+    /** Kernel-reported speed of the bottleneck transit interface, or null when
+     *  the kernel has no figure for it. Never a default. */
+    bandwidth: number | null;
+    bandwidth_basis: string;
+    latency: number | null;
+    latency_basis: string;
+    /** Worst measured segment, not a mean, so one dead hop cannot read small. */
+    packet_loss: number | null;
     total_cost: number;
     modelled_hops: number;
     path_hops: number;
@@ -427,6 +432,135 @@ async function describeFailure(response: Response, action: string): Promise<stri
 export async function getLabStatus(): Promise<LabStatus> {
   const response = await fetch(`${API_BASE}/api/lab/status`);
   if (!response.ok) throw new Error(await describeFailure(response, "Lab status"));
+  return response.json();
+}
+
+/* ------------------------------------------------------------------ */
+/* Deploying the drawn topology as the lab that gets measured          */
+/* ------------------------------------------------------------------ */
+
+/** Address class of a link. The mask follows from it, so there is nothing
+ *  to type: A -> 255.0.0.0, B -> 255.255.0.0, C -> 255.255.255.0. */
+export type AddressClass = "A" | "B" | "C";
+
+export const ADDRESS_CLASSES: AddressClass[] = ["A", "B", "C"];
+
+export const MASK_FOR_CLASS: Record<AddressClass, string> = {
+  A: "255.0.0.0",
+  B: "255.255.0.0",
+  C: "255.255.255.0",
+};
+
+export const PREFIX_FOR_CLASS: Record<AddressClass, number> = { A: 8, B: 16, C: 24 };
+
+/** What the designer sends. Addresses already on a link are sent verbatim so
+ *  the lab uses the IP the canvas shows; blanks are filled in by the backend. */
+export interface DeployTopologyPayload {
+  routers: Array<{ id: string; name: string; type: string; area: number; router_id?: string }>;
+  links: Array<{
+    id: string;
+    source: string;
+    target: string;
+    cost: number;
+    area: number;
+    address_class: AddressClass;
+    source_ip?: string;
+    target_ip?: string;
+    subnet?: string;
+  }>;
+}
+
+export interface DeployLink {
+  id: string;
+  source: string;
+  target: string;
+  subnet: string;
+  mask: string;
+  address_class: string;
+  source_ip: string;
+  target_ip: string;
+  cost: number;
+  area: number;
+  network: string;
+}
+
+export interface DeployRouter {
+  id: string;
+  container: string;
+  area: number;
+  router_id?: string;
+  ip?: string;
+  name?: string;
+}
+
+export interface DeployResult {
+  ok: boolean;
+  lab_dir: string;
+  replaced_containers: string[];
+  routers: DeployRouter[];
+  links: DeployLink[];
+  areas: number[];
+  interfaces: Record<string, Record<string, string>>;
+}
+
+export interface DeployState {
+  source: "designer" | "enterprise-ospf-lab" | null;
+  running: boolean;
+  plan: { routers: DeployRouter[]; links: DeployLink[]; areas: number[] } | null;
+  interfaces: Record<string, Record<string, string>> | null;
+}
+
+/** Build the running lab from the topology drawn in the designer.
+ *
+ *  The canvas is the source of truth: addresses, OSPF costs and areas already
+ *  on the canvas are used as given, and anything blank is allocated by the
+ *  backend and returned in the result for the canvas to adopt. That returned
+ *  plan is what the routers are actually configured with, verified against
+ *  `show ip ospf interface` before the call returns. */
+export async function deployLab(
+  topology: DeployTopologyPayload,
+  waitSeconds = 90
+): Promise<DeployResult> {
+  const response = await fetch(`${API_BASE}/api/lab/deploy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topology, wait_seconds: waitSeconds }),
+  });
+  if (!response.ok) throw new Error(await describeFailure(response, "Deploy"));
+  return response.json();
+}
+
+/** Which lab is currently measurable, and the address plan it was built from. */
+export async function getDeployState(): Promise<DeployState> {
+  const response = await fetch(`${API_BASE}/api/lab/deploy`);
+  if (!response.ok) throw new Error(await describeFailure(response, "Lab state"));
+  return response.json();
+}
+
+export async function teardownDeployedLab(): Promise<{ removed: boolean; detail: string }> {
+  const response = await fetch(`${API_BASE}/api/lab/deploy/teardown`, { method: "POST" });
+  if (!response.ok) throw new Error(await describeFailure(response, "Teardown"));
+  return response.json();
+}
+
+/** Bring the fixed enterprise-ospf-lab back up as the measurement target. */
+export async function deployEnterpriseLab(): Promise<{ ok: boolean; lab: string }> {
+  const response = await fetch(`${API_BASE}/api/lab/deploy/enterprise`, { method: "POST" });
+  if (!response.ok) throw new Error(await describeFailure(response, "Deploy fixed lab"));
+  return response.json();
+}
+
+/** Plan addresses without touching Docker, so the canvas can show an IP the
+ *  moment a link is drawn rather than after a two-minute deploy. */
+export async function previewAddresses(
+  topology: DeployTopologyPayload
+): Promise<DeployResult> {
+  const response = await fetch(`${API_BASE}/api/lab/plan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topology }),
+  });
+  if (!response.ok) throw new Error(await describeFailure(response, "Address plan"));
   return response.json();
 }
 

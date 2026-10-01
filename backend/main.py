@@ -53,6 +53,7 @@ from lab_deploy import (
     deploy_enterprise,
     deployed_lab_running,
     load_record,
+    resolve_plan,
     teardown,
 )
 from lab_topology import discover_lab
@@ -240,6 +241,30 @@ def lab_deploy_state():
         "running": running,
         "plan": record["plan"] if record else None,
         "interfaces": record["interfaces"] if record else None,
+    }
+
+
+@app.post("/api/lab/plan")
+def lab_deploy_plan(request: DeployRequest):
+    """Resolve a topology's addresses, costs and areas without touching Docker.
+
+    The canvas calls this as links are drawn so a real IP can be shown
+    immediately, rather than only after a deploy that takes a couple of minutes.
+    Addresses already on a link are honoured; blanks are allocated the same way a
+    deploy allocates them, so what the canvas shows is what the lab will get.
+    """
+    try:
+        plan = resolve_plan(request.topology)
+    except DeployError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "routers": plan["routers"],
+        "links": plan["links"],
+        "areas": plan["areas"],
+        "interfaces": {},
+        "replaced_containers": [],
+        "lab_dir": None,
     }
 
 

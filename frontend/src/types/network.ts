@@ -36,6 +36,9 @@ export interface NetworkDevice {
   gateway: string;
   macAddress: string;
   interfaces: NetworkInterface[];
+  /** OSPF area this router's links join unless a link overrides it. Area 0 is
+   *  the backbone and is the only one every router can reach. */
+  ospfArea?: number;
   model: string;
   iosVersion: string;
   uptime: string;
@@ -52,6 +55,19 @@ export interface NetworkCable {
   controlPoint: { x: number; y: number } | null;
   status: 'active' | 'down';
   cableType: 'straight-through' | 'crossover' | 'fiber' | 'serial';
+  /** Address class of this link. The mask follows from it, so choosing a class
+   *  is enough -- nothing here needs a typed prefix. */
+  addressClass?: 'A' | 'B' | 'C';
+  /** Subnet and the two endpoint addresses, as allocated by the backend and
+   *  then held here so the canvas and the lab can never disagree. */
+  subnet?: string;
+  subnetMask?: string;
+  sourceIp?: string;
+  targetIp?: string;
+  /** OSPF area for the two interfaces this link creates. Overrides the area of
+   *  the router at each end, which is what lets a link join a different area
+   *  from the rest of the router. */
+  ospfArea?: number;
   cost?: number;
   bandwidth?: number; // Mbps
   latency?: number; // ms (legacy, backend compat)

@@ -27,6 +27,10 @@ interface DevicePropertiesPanelProps {
   onDeleteDevice: (deviceId: string) => void;
   onOpenCLI: (device: NetworkDevice) => void;
   onAddInterface: (device: NetworkDevice) => void;
+  /** The address the backend allocated to this router on the running lab, so
+   *  the canvas shows the IP the routers actually hold. */
+  deployedIp?: string;
+  deployedArea?: number;
 }
 
 export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
@@ -35,6 +39,8 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
   onDeleteDevice,
   onOpenCLI,
   onAddInterface,
+  deployedIp,
+  deployedArea,
 }) => {
   const [name, setName] = useState(device?.name || '');
   const [ipAddress, setIpAddress] = useState(device?.ipAddress || '');
@@ -291,6 +297,54 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
                 onBlur={handleApplyChanges}
                 className="w-full px-3 py-1.5 rounded-lg bg-panel border border-line text-ink font-mono text-xs focus:border-accent focus:outline-none"
               />
+            </div>
+
+            {/* What the running lab has on this router, read back from the
+                backend. Shown beside the editable field so the two cannot be
+                confused: this is what the routers hold right now. */}
+            {(deployedIp || deployedArea !== undefined) && (
+              <div className="mb-3 p-2.5 rounded-lg bg-sunken border border-line">
+                <div className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider mb-1">
+                  On the running lab
+                </div>
+                <div className="text-[11px] font-mono text-ink-soft space-y-0.5">
+                  {deployedIp && (
+                    <p>
+                      <span className="text-ink-faint">IP</span> {deployedIp}
+                    </p>
+                  )}
+                  {deployedArea !== undefined && (
+                    <p>
+                      <span className="text-ink-faint">Area</span> {deployedArea}
+                      {deployedArea === 0 && <span className="text-ink-faint"> (backbone)</span>}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* OSPF area for this router's links */}
+            <div>
+              <label className="text-[11px] text-ink-soft font-medium">OSPF Area</label>
+              <input
+                type="number"
+                min={0}
+                value={device?.ospfArea ?? ''}
+                placeholder="0 (backbone)"
+                onChange={(e) => {
+                  if (!device) return;
+                  const raw = e.target.value;
+                  onUpdateDevice({
+                    ...device,
+                    ospfArea: raw === '' ? undefined : Math.max(0, Number(raw)),
+                  });
+                }}
+                className="w-full mt-1 px-3 py-1.5 rounded-lg bg-panel border border-line text-ink font-mono text-xs focus:border-accent focus:outline-none"
+              />
+              <p className="text-[10px] text-ink-faint mt-1 leading-tight">
+                Used by every link this router starts, unless that link sets its own area.
+                Deploy to push it to the routers.
+              </p>
             </div>
 
             {/* Primary IP Address with strict validation */}
