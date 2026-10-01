@@ -19,6 +19,9 @@ backend/test_topologies/
 backend/test_docker_output/
 generated_topologies/
 
+# The lab generated from the designer topology (rebuilt by POST /api/lab/deploy)
+backend/labs/
+
 # Logs
 *.log
 

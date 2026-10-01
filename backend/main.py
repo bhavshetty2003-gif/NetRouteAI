@@ -5,6 +5,11 @@ Surface:
     POST /upload-topology               frontend topology -> CURRENT_TOPOLOGY
     POST /api/routing/recommend         Random Forest route recommendation
     GET  /api/lab/status                running Docker/FRR lab inventory
+    POST /api/lab/deploy                build the measurable lab from the
+                                       designer topology (same IPs/costs/areas)
+    GET  /api/lab/deploy                which lab is running + its address plan
+    POST /api/lab/deploy/enterprise     restore the fixed lab as a fallback
+    POST /api/lab/deploy/teardown       stop the generated lab
     POST /api/lab/measure               real ping/traceroute between two devices
     GET  /api/lab/metrics               full metric sweep (interfaces, queues,
                                        CPU/mem, OSPF state, routing tables)
@@ -42,6 +47,14 @@ from database import (
     insert_training_sample,
     record_measurement,
 )
+from lab_deploy import (
+    DeployError,
+    deploy,
+    deploy_enterprise,
+    deployed_lab_running,
+    load_record,
+    teardown,
+)
 from lab_topology import discover_lab
 from metrics_collector import (
     LabUnavailable,
@@ -57,6 +70,7 @@ from models import (
     AnalyticsCompareRequest,
     AnalyticsCompareResponse,
     ConvergenceRequest,
+    DeployRequest,
     ImpairRequest,
     LinkStateRequest,
     LiveAnalyticsRequest,
@@ -204,6 +218,58 @@ def route_recommendation(request: RouteRecommendationRequest):
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return RouteRecommendationResponse(**result)
+
+
+# --------------------------------------------------------------------------- #
+# Deploying the designed lab
+# --------------------------------------------------------------------------- #
+@app.get("/api/lab/deploy")
+def lab_deploy_state():
+    """Which lab is currently measurable, and the plan it was built from.
+
+    The plan is the record of the addresses the running lab actually uses, so
+    the designer shows the IPs the routers were configured with rather than the
+    ones it hoped for.
+    """
+    record = load_record()
+    running = deployed_lab_running()
+    return {
+        "source": "designer" if running else (
+            "enterprise-ospf-lab" if discover_lab()["online"] else None
+        ),
+        "running": running,
+        "plan": record["plan"] if record else None,
+        "interfaces": record["interfaces"] if record else None,
+    }
+
+
+@app.post("/api/lab/deploy")
+def lab_deploy(request: DeployRequest):
+    """Build the running lab from the topology drawn in the designer.
+
+    Addresses given in the payload are used verbatim; anything unset is filled
+    in and returned so the caller can adopt it. Container names come from
+    router ids, so a lab already holding those names is replaced.
+    """
+    try:
+        return deploy(request.topology, wait_seconds=request.wait_seconds)
+    except DeployError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/lab/deploy/enterprise")
+def lab_deploy_enterprise():
+    """Restore the fixed `enterprise-ospf-lab` as the measurement target."""
+    try:
+        return deploy_enterprise()
+    except DeployError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/lab/deploy/teardown")
+def lab_deploy_teardown():
+    """Stop the generated lab without touching the fixed one."""
+    return teardown()
 
 
 # --------------------------------------------------------------------------- #

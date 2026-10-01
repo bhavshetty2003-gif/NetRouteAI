@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel
 
 
@@ -141,6 +141,19 @@ class RouteSteerRequest(BaseModel):
     destination: str
     method: str = "ai"
     apply: bool = True
+
+
+class DeployRequest(BaseModel):
+    """Build the measurable lab from the topology drawn in the designer.
+
+    `routers` and `links` mirror the canvas verbatim. Addresses, OSPF costs and
+    areas the designer already holds are sent as-is so the running lab uses the
+    same values the UI shows; anything left blank is filled in by the backend
+    and returned for the designer to adopt.
+    """
+
+    topology: dict[str, Any]
+    wait_seconds: float = 90.0
 
 
 class TrafficRequest(BaseModel):
