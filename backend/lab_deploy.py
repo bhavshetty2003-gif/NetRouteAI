@@ -460,41 +460,6 @@ def _claim(address: str, owner: str, used: dict[str, str]) -> None:
     used[address] = owner
 
 
-def _to_interface(value: str) -> ipaddress.IPv4Interface:
-    text = value if "/" in value else f"{value}/{_PREFIX_BITS}"
-    try:
-        return ipaddress.ip_interface(text)
-    except ValueError as exc:
-        raise DeployError(f"'{value}' is not a valid IPv4 address") from exc
-
-
-def _in_subnet(address, subnet, supplied: str, field: str) -> str:
-    if address in subnet and address != subnet.network_address:
-        return str(address)
-    if supplied:
-        raise DeployError(
-            f"{supplied} is not a usable host address on subnet {subnet}"
-        )
-    return str(list(subnet.hosts())[_FIRST_HOST - 1])
-
-
-def _reserve_subnet(subnet, used: set[str], raw: dict[str, Any]) -> None:
-    if subnet in used:
-        raise DeployError(
-            f"Link {raw.get('source')}–{raw.get('target')} reuses subnet {subnet}, "
-            f"which is already taken by another link"
-        )
-    used.add(subnet)
-
-
-def _claim(address: str, owner: str, used: dict[str, str]) -> None:
-    if address in used:
-        raise DeployError(
-            f"{address} is assigned to both {used[address]} and {owner}"
-        )
-    used[address] = owner
-
-
 # --------------------------------------------------------------------------- #
 # Writing the lab
 # --------------------------------------------------------------------------- #
