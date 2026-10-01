@@ -15,7 +15,7 @@ Multi-package monorepo — each subproject has its own dependency manifest:
 | `shortest-path-demo/` | 5-router shortest-path demo |
 | `scripts/` | Maintenance utilities (`migrate_theme.py`, `audit_contrast.py`) |
 
-Root `README.md` and `requirements.txt` are intentionally empty. `tests/`, `docs/`, and `database/` are empty placeholders.
+Root `README.md` and `requirements.txt` are intentionally empty. `tests/` and `database/` are empty placeholders. `docs/` holds `ALGORITHM_FLOWCHARTS.md` — 20 Mermaid flowcharts transcribed from the running code, with a source reference per diagram; update it when an algorithm changes.
 
 ## Commands
 
