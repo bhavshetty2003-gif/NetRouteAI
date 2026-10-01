@@ -54,7 +54,7 @@ export const DevicePalette: React.FC<DevicePaletteProps> = ({ onAddDevice }) => 
             draggable
             onDragStart={(e) => handleDragStart(e, item.type)}
             onClick={() => onAddDevice(item.type)}
-            className="group relative flex items-center p-3 rounded-xl bg-panel/60 hover:bg-raised/90 border border-line hover:border-accent/50 cursor-grab active:cursor-grabbing transition-all duration-150 shadow-sm hover:shadow-black/30"
+            className="group relative flex items-center p-3 rounded-xl bg-panel/60 hover:bg-raised/90 border border-line hover:border-accent/50 cursor-grab active:cursor-grabbing transition-all duration-150 shadow-sm hover:shadow-lift"
           >
             <div className="mr-3 shrink-0 flex items-center justify-center p-1 rounded-lg bg-panel group-hover:bg-panel/80 transition-colors">
               {item.icon}
@@ -64,10 +64,10 @@ export const DevicePalette: React.FC<DevicePaletteProps> = ({ onAddDevice }) => 
                 <span className="text-xs font-bold text-ink group-hover:text-accent transition-colors">
                   {item.name}
                 </span>
-                <Plus className="w-3.5 h-3.5 text-accent-ink group-hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <Plus className="w-3.5 h-3.5 text-accent group-hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
               <p className="text-[11px] text-ink-muted font-medium">{item.subtitle}</p>
-              <p className="text-[10px] text-accent-ink font-mono truncate mt-0.5">{item.specs}</p>
+              <p className="text-[10px] text-ink-muted font-mono truncate mt-0.5">{item.specs}</p>
             </div>
           </div>
         ))}

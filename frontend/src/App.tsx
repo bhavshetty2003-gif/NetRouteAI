@@ -1303,7 +1303,7 @@ export default function App() {
   // Dedicated SaaS Landing Page View vs Main Workspace Layout
   if (activeTab === 'home') {
     return (
-      <div id="netrouteai-root" className="min-h-screen bg-[#050816] text-ink font-sans">
+      <div id="netrouteai-root" className="min-h-screen bg-base text-ink font-sans">
         <HomeView
           onLaunchDesigner={() => setActiveTab('designer')}
           deviceCount={devices.length}
@@ -1316,7 +1316,7 @@ export default function App() {
   return (
     <div
       id="netrouteai-root"
-      className="h-screen overflow-hidden bg-[#050816] text-ink flex flex-col font-sans"
+      className="h-screen overflow-hidden bg-base text-ink flex flex-col font-sans"
     >
       {/* 1. Full-Width Top Navbar */}
       <Navbar
@@ -1537,7 +1537,7 @@ export default function App() {
 
               {/* AI Route Recommendation Result Banner */}
               {aiRouteResult && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-base/95 border border-ok/50 rounded-xl shadow-2xl shadow-black/30 px-5 py-3 max-w-lg">
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-base/95 border border-ok/50 rounded-xl shadow-2xl shadow-lift px-5 py-3 max-w-lg">
                   <div className="flex items-center gap-3">
                     <div className="p-2 rounded-lg bg-ok/20 border border-ok/40">
                       <Brain className="w-4 h-4 text-ok" />

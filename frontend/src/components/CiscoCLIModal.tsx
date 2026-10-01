@@ -639,19 +639,19 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
         <div
           id="cisco-cli-output"
           onClick={() => inputRef.current?.focus()}
-          className="flex-1 p-4 font-mono text-xs sm:text-sm overflow-y-auto bg-[#030712] text-ink space-y-1 select-text leading-relaxed"
+          className="flex-1 p-4 font-mono text-xs sm:text-sm overflow-y-auto bg-console text-console-ink space-y-1 select-text leading-relaxed"
         >
           {lines.map((line, idx) => (
             <div
               key={idx}
               className={`whitespace-pre-wrap ${
                 line.type === 'prompt'
-                  ? 'text-accent font-semibold'
+                  ? 'text-console-accent font-semibold'
                   : line.type === 'error'
-                  ? 'text-bad'
+                  ? 'text-console-bad'
                   : line.type === 'success'
-                  ? 'text-ok'
-                  : 'text-ink-soft'
+                  ? 'text-console-ok'
+                  : 'text-console-ink'
               }`}
             >
               {line.text}
@@ -660,7 +660,7 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
 
           {/* Active Input Line */}
           <div className="flex items-center space-x-2 pt-1">
-            <span className="text-accent font-bold whitespace-nowrap font-mono">{getPrompt()}</span>
+            <span className="text-console-accent font-bold whitespace-nowrap font-mono">{getPrompt()}</span>
             <input
               ref={inputRef}
               id="cisco-cli-active-input"
@@ -671,7 +671,7 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
               autoFocus
               spellCheck={false}
               autoComplete="off"
-              className="flex-1 bg-transparent text-ok outline-none border-none font-mono text-xs sm:text-sm p-0 m-0 caret-accent"
+              className="flex-1 bg-transparent text-console-ok outline-none border-none font-mono text-xs sm:text-sm p-0 m-0 caret-console-accent"
             />
           </div>
           <div ref={bottomRef} />
@@ -683,7 +683,7 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
           className="flex items-center justify-between px-4 py-2 bg-panel/90 border-t border-line text-xs text-ink-muted font-mono"
         >
           <div className="flex items-center space-x-2 overflow-x-auto">
-            <span className="text-accent-ink">Quick:</span>
+            <span className="text-ink-muted">Quick:</span>
             <button
               onClick={() => executeCommand('enable')}
               className="px-2 py-0.5 rounded bg-panel hover:bg-overlay text-accent transition-colors"
@@ -715,7 +715,7 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
               sh ver
             </button>
           </div>
-          <div className="hidden sm:flex items-center space-x-2 text-[11px] text-accent-ink">
+          <div className="hidden sm:flex items-center space-x-2 text-[11px] text-ink-muted">
             <span>↑↓ History</span>
             <span>•</span>
             <span>'?' for Help</span>

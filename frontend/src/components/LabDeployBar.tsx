@@ -80,7 +80,7 @@ export const LabDeployBar: React.FC<LabDeployBarProps> = ({
             type="button"
             onClick={onDeploy}
             disabled={isBusy || !canDeploy}
-            className="flex items-center gap-1.5 rounded border border-accent/50 bg-accent-soft px-2.5 py-1.5 text-[11px] font-semibold text-accent-ink hover:border-accent disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 rounded border border-accent/50 bg-accent-soft px-2.5 py-1.5 text-[11px] font-semibold text-accent hover:border-accent disabled:opacity-40 disabled:cursor-not-allowed"
             title="Build this canvas as a real lab: one container per router, one subnet per link, then push the OSPF areas and costs and read them back"
           >
             {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Rocket className="w-3 h-3" />}

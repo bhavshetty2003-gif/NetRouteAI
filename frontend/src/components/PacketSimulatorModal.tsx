@@ -207,10 +207,10 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
                         <span className="text-[10px] text-ink-muted font-normal">({dev?.type})</span>
                       </div>
                       {!isLast && (
-                        <div className="flex items-center text-accent-ink text-[11px]">
-                          <span className="text-accent/80 mr-1">{hop?.fromPort}</span>
+                        <div className="flex items-center text-ink-muted text-[11px]">
+                          <span className="text-accent mr-1">{hop?.fromPort}</span>
                           <ArrowRight className="w-3.5 h-3.5 text-ink-muted" />
-                          <span className="text-accent/80 ml-1">{hop?.toPort}</span>
+                          <span className="text-accent ml-1">{hop?.toPort}</span>
                         </div>
                       )}
                     </React.Fragment>
@@ -218,7 +218,7 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
                 })}
               </div>
             ) : (
-              <p className="text-xs text-bad/90 font-mono">
+              <p className="text-xs text-console-bad font-mono">
                 {routePreview?.error || 'Select distinct source and destination devices.'}
               </p>
             )}
@@ -226,20 +226,20 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
 
           {/* Simulation Log Stream */}
           {simulationState.logs.length > 0 && (
-            <div className="p-3 rounded-xl bg-[#030712] border border-line space-y-1.5 font-mono text-xs max-h-36 overflow-y-auto">
-              <div className="text-[11px] text-accent-ink font-sans font-semibold mb-1">Transmission Telemetry:</div>
+            <div className="p-3 rounded-xl bg-console border border-line space-y-1.5 font-mono text-xs max-h-36 overflow-y-auto">
+              <div className="text-[11px] text-console-muted font-sans font-semibold mb-1">Transmission Telemetry:</div>
               {simulationState.logs.map((log) => (
                 <div
                   key={log.id}
                   className={`flex items-start space-x-2 text-[11px] ${
                     log.type === 'success'
-                      ? 'text-ok'
+                      ? 'text-console-ok'
                       : log.type === 'error'
-                      ? 'text-bad'
-                      : 'text-ink-soft'
+                      ? 'text-console-bad'
+                      : 'text-console-ink'
                   }`}
                 >
-                  <span className="text-accent-ink">[{log.timestamp}]</span>
+                  <span className="text-console-muted">[{log.timestamp}]</span>
                   <span>{log.message}</span>
                 </div>
               ))}
@@ -297,7 +297,7 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
                       running: true,
                     })
                   }
-                  className="flex-1 flex items-center justify-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r from-ai to-info hover:from-ai hover:to-info text-ink text-xs font-semibold shadow-md transition-all cursor-pointer"
+                  className="flex-1 flex items-center justify-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r from-ai to-info hover:from-ai hover:to-info text-accent-ink text-xs font-semibold shadow-md transition-all cursor-pointer"
                 >
                   <Play className="w-3.5 h-3.5" />
                   <span>Start Generator</span>
@@ -320,7 +320,7 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
 
         {/* Footer Actions */}
         <div className="px-5 py-3 bg-panel border-t border-line flex items-center justify-between">
-          <div className="text-xs text-accent-ink">
+          <div className="text-xs text-ink-muted">
             Payload: Glowing 64-byte Ethernet Frame (White □□□□ with green glow)
           </div>
           <div className="flex items-center space-x-2">
@@ -336,8 +336,8 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
               disabled={!routePreview?.success || simulationState.active}
               className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold shadow-lg transition-all ${
                 routePreview?.success && !simulationState.active
-                  ? 'bg-gradient-to-r from-ok to-info hover:from-ok hover:to-info text-accent-ink shadow-black/40 cursor-pointer active:scale-98'
-                  : 'bg-panel text-accent-ink cursor-not-allowed'
+                  ? 'bg-gradient-to-r from-ok to-info hover:from-ok hover:to-info text-accent-ink shadow-lift-strong cursor-pointer active:scale-98'
+                  : 'bg-panel text-ink-faint cursor-not-allowed'
               }`}
             >
               <Play className="w-3.5 h-3.5 fill-current" />

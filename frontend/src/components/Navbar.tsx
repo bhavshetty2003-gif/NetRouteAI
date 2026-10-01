@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ActiveNavTab } from '../types/network';
+import { currentTheme, toggleTheme, type Theme } from '../utils/theme';
 import {
   Network,
   Bell,
@@ -28,7 +29,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigate,
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
-  const [isDark, setIsDark] = useState(true);
+  // Read from the document rather than initialised to `true`: `index.html` has
+  // already applied the stored preference (or the OS one) to <html> before
+  // React mounts, so a hardcoded default would show the wrong icon on every
+  // reload in the cream theme.
+  const [theme, setTheme] = useState<Theme>(() => currentTheme());
 
   const notifications = [
     { id: '1', title: 'OSPF Adjacency Full', desc: 'R1 and R2 formed bidirectional peer on Gi0/1', time: '2m ago' },
@@ -44,12 +49,12 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Brand & Page Title */}
       <div className="flex items-center space-x-3">
         <div className="flex items-center space-x-3 text-left">
-          <div className="p-2 rounded-xl bg-accent-soft border border-accent/40 text-accent shadow-md shadow-black/60">
+          <div className="p-2 rounded-xl bg-accent-soft border border-accent/40 text-accent shadow-md shadow-lift-strong">
             <Network className="w-5 h-5 text-accent" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h1 className="text-base font-bold tracking-tight text-accent-ink flex items-center gap-1.5">
+              <h1 className="text-base font-bold tracking-tight text-ink flex items-center gap-1.5">
                 <span>NetRoute</span>
                 <span className="text-accent font-mono">AI</span>
               </h1>
@@ -78,7 +83,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             id="navbar-launch-designer-btn"
             onClick={() => onNavigate?.('designer')}
-            className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink font-bold text-xs shadow-md shadow-black/60 transition-all cursor-pointer active:scale-98"
+            className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink font-bold text-xs shadow-md shadow-lift-strong transition-all cursor-pointer active:scale-98"
           >
             <Compass className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Launch Designer</span>
@@ -102,11 +107,13 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Theme Toggle */}
         <button
           id="navbar-theme-toggle"
-          onClick={() => setIsDark(!isDark)}
-          title="Toggle UI brightness theme"
+          onClick={() => setTheme(toggleTheme())}
+          title={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
+          aria-label={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
+          aria-pressed={theme === 'dark'}
           className="p-2 rounded-xl bg-panel hover:bg-raised border border-line text-ink-soft hover:text-accent transition-colors"
         >
-          {isDark ? <Moon className="w-4 h-4 text-accent" /> : <Sun className="w-4 h-4 text-warn" />}
+          {theme === 'dark' ? <Moon className="w-4 h-4 text-accent" /> : <Sun className="w-4 h-4 text-warn" />}
         </button>
 
         {/* Notifications Popover Toggle */}
@@ -134,7 +141,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <div key={n.id} className="p-2 rounded-lg bg-panel/60 border border-line/80">
                     <div className="flex items-center justify-between text-ink font-medium">
                       <span>{n.title}</span>
-                      <span className="text-[10px] text-accent-ink font-mono">{n.time}</span>
+                      <span className="text-[10px] text-ink-faint font-mono">{n.time}</span>
                     </div>
                     <p className="text-[11px] text-ink-muted mt-0.5">{n.desc}</p>
                   </div>
@@ -149,7 +156,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           id="navbar-profile"
           className="flex items-center space-x-2 pl-2 pr-3 py-1 rounded-xl bg-panel border border-line text-xs"
         >
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-accent-deep flex items-center justify-center text-ink font-bold text-xs shadow">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-accent-deep flex items-center justify-center text-accent-ink font-bold text-xs shadow">
             CC
           </div>
           <div className="hidden sm:block text-left font-mono leading-tight">

@@ -58,7 +58,7 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
               onClick={() => onUpdateCable({ ...cable, addressClass: cls })}
               className={`rounded border px-2 py-2 text-xs font-semibold transition-colors ${
                 addressClass === cls
-                  ? 'border-accent bg-accent-soft text-accent-ink'
+                  ? 'border-accent bg-accent-soft text-accent'
                   : 'border-line bg-panel text-ink-muted hover:border-ink-faint'
               }`}
             >

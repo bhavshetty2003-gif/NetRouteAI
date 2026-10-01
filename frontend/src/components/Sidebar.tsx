@@ -33,7 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     >
       {/* Navigation List */}
       <div className="p-3 space-y-1 overflow-y-auto">
-        <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-accent-ink">
+        <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-ink-muted">
           Navigation
         </div>
 
@@ -47,7 +47,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => onTabChange(item.id)}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-150 ${
                 isActive
-                  ? 'bg-gradient-to-r from-accent-soft/80 to-base text-accent border border-accent/40 shadow-sm shadow-black/40'
+                  ? 'bg-gradient-to-r from-accent-soft/80 to-base text-accent border border-accent/40 shadow-sm shadow-lift-strong'
                   : 'text-ink-muted hover:text-ink hover:bg-panel/80'
               }`}
             >

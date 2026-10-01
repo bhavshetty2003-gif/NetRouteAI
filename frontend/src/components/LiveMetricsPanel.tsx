@@ -274,7 +274,7 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
             type="button"
             onClick={measure}
             disabled={busy || !source || source === destination}
-            className="w-full flex items-center justify-center gap-2 rounded-lg bg-accent-soft border border-accent/40 px-3 py-2 text-xs font-semibold text-accent-ink hover:border-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-2 rounded-lg bg-accent-soft border border-accent/40 px-3 py-2 text-xs font-semibold text-accent hover:border-accent disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
             {busy ? 'Measuring on the lab' : 'Measure on the lab'}

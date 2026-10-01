@@ -158,7 +158,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
     <div
       id="floating-drawing-palette"
       style={{ left: `${position.x}px`, top: `${position.y}px` }}
-      className="fixed z-40 w-72 bg-panel/90 backdrop-blur-xl border border-accent/40 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden font-sans transition-shadow select-none"
+      className="fixed z-40 w-72 bg-panel/90 backdrop-blur-xl border border-accent/40 rounded-2xl shadow-2xl shadow-lift-strong overflow-hidden font-sans transition-shadow select-none"
     >
       {/* Draggable Header */}
       <div
@@ -168,7 +168,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
         <div className="flex items-center space-x-2">
           <GripHorizontal className="w-4 h-4 text-accent opacity-80" />
           <Palette className="w-3.5 h-3.5 text-accent" />
-          <span className="text-xs font-bold text-accent-ink tracking-wide">Drawing Palette</span>
+          <span className="text-xs font-bold text-ink tracking-wide">Drawing Palette</span>
           <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-accent-soft border border-accent/60 text-accent font-semibold">
             Vector
           </span>
@@ -298,8 +298,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('rect')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'rect'
-                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
-                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-lift-strong'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent'
                   }`}
                   title="Rectangle Shape"
                 >
@@ -312,8 +312,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('rounded-rect')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'rounded-rect'
-                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
-                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-lift-strong'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent'
                   }`}
                   title="Rounded Rectangle"
                 >
@@ -326,8 +326,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('circle')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'circle'
-                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
-                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-lift-strong'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent'
                   }`}
                   title="Circle Shape"
                 >
@@ -340,8 +340,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('ellipse')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'ellipse'
-                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
-                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-lift-strong'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent'
                   }`}
                   title="Ellipse Zone"
                 >
@@ -354,8 +354,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('line')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'line'
-                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
-                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-lift-strong'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent'
                   }`}
                   title="Straight Line"
                 >
@@ -368,8 +368,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('arrow')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer ${
                     activeTool === 'arrow'
-                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
-                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-lift-strong'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent'
                   }`}
                   title="Flow Arrow"
                 >
@@ -382,8 +382,8 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   onClick={() => onSelectTool('text')}
                   className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs transition-all cursor-pointer col-span-2 ${
                     activeTool === 'text'
-                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-black'
-                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent-ink'
+                      ? 'bg-accent-soft border-accent text-accent shadow-md shadow-lift-strong'
+                      : 'bg-panel/60 border-line/60 text-ink-soft hover:bg-raised hover:text-accent'
                   }`}
                   title="Text Label (Click on canvas to type immediately)"
                 >
@@ -533,7 +533,7 @@ export const DrawingPalette: React.FC<DrawingPaletteProps> = ({
                   }}
                   className="w-full accent-accent cursor-pointer"
                 />
-                <div className="flex justify-between text-[9px] text-accent-ink font-mono mt-0.5">
+                <div className="flex justify-between text-[9px] text-ink-faint font-mono mt-0.5">
                   <span>5%</span>
                   <span>25%</span>
                   <span>50%</span>

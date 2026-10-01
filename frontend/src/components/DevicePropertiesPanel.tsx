@@ -76,7 +76,7 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
     return (
       <div className="w-80 lg:w-88 h-full bg-base border-l border-line flex flex-col items-center justify-center p-6 text-center select-none">
         <div className="w-16 h-16 rounded-2xl bg-panel/80 border border-line flex items-center justify-center text-ink-faint mb-4 shadow-inner">
-          <Server className="w-8 h-8 text-accent/50" />
+          <Server className="w-8 h-8 text-accent" />
         </div>
         <h3 className="text-sm font-semibold text-ink-soft mb-1">No Device Selected</h3>
         <p className="text-xs text-ink-muted max-w-[200px] leading-relaxed">
@@ -265,7 +265,7 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
               className={`flex items-center space-x-1 text-xs px-2.5 py-1 rounded transition-colors ${
                 hasFormErrors
                   ? 'bg-panel text-ink-faint border border-line cursor-not-allowed'
-                  : 'bg-accent-deep hover:bg-accent text-ink border border-accent cursor-pointer shadow-sm'
+                  : 'bg-accent-deep hover:bg-accent text-accent-ink border border-accent cursor-pointer shadow-sm'
               }`}
               title={hasFormErrors ? 'Incorrect configuration numbers. Please rewrite before applying.' : 'Apply changes'}
             >
@@ -617,7 +617,7 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
                           type="button"
                           onClick={() => handleSaveIfaceConfig(iface.id)}
                           disabled={!!ifaceIpError || !!ifaceMaskError}
-                          className="px-2.5 py-0.5 rounded bg-accent-deep hover:bg-accent disabled:opacity-50 text-ink font-bold text-[10px] cursor-pointer"
+                          className="px-2.5 py-0.5 rounded bg-accent-deep hover:bg-accent disabled:opacity-50 text-accent-ink font-bold text-[10px] cursor-pointer"
                         >
                           Save Port IP
                         </button>
@@ -672,7 +672,7 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
       <div className="p-3 bg-base border-t border-line shrink-0">
         <button
           onClick={() => onOpenCLI(device)}
-          className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-accent to-accent hover:from-accent hover:to-accent text-ink font-semibold text-xs transition-all shadow-lg shadow-black/50 active:scale-[0.99] cursor-pointer"
+          className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-accent to-accent hover:from-accent hover:to-accent text-accent-ink font-semibold text-xs transition-all shadow-lg shadow-lift-strong active:scale-[0.99] cursor-pointer"
         >
           <Terminal className="w-4 h-4 text-ink" />
           <span>Open Cisco CLI</span>

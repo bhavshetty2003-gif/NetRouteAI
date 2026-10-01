@@ -94,7 +94,7 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
       ref={menuRef}
       id="canvas-context-menu"
       style={{ left: `${adjustedX}px`, top: `${adjustedY}px` }}
-      className="fixed z-50 w-56 bg-panel/95 backdrop-blur-xl border border-accent/30 rounded-xl shadow-2xl shadow-black/80 py-1.5 text-xs text-ink select-none animate-in fade-in zoom-in-95 duration-100 font-sans"
+      className="fixed z-50 w-56 bg-panel/95 backdrop-blur-xl border border-accent/30 rounded-xl shadow-2xl shadow-lift-strong py-1.5 text-xs text-ink select-none animate-in fade-in zoom-in-95 duration-100 font-sans"
     >
       <div className="px-3 py-1 text-[10px] font-mono font-bold text-accent uppercase tracking-wider border-b border-line flex items-center justify-between">
         <span>Canvas Actions</span>

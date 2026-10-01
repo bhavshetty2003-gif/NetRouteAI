@@ -703,7 +703,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
       onContextMenu={handleContextMenu}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      className={`relative flex-1 h-full w-full bg-[#050816] overflow-hidden select-none cursor-default ${
+      className={`relative flex-1 h-full w-full bg-base overflow-hidden select-none cursor-default ${
         isConnectMode
           ? 'cursor-crosshair'
           : activeDrawingTool !== 'select'
@@ -1447,13 +1447,13 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
               <div
                 className={`relative p-1 rounded-2xl transition-all ${
                   isConnectSource
-                    ? 'ring-4 ring-accent ring-offset-2 ring-offset-[#050816] shadow-xl shadow-black/40 bg-accent-soft/40'
+                    ? 'ring-4 ring-accent ring-offset-2 ring-offset-[#050816] shadow-xl shadow-lift-strong bg-accent-soft/40'
                     : isSelected
-                    ? 'ring-2 ring-accent ring-offset-1 ring-offset-[#050816] shadow-lg shadow-black/60 bg-panel/60'
+                    ? 'ring-2 ring-accent ring-offset-1 ring-offset-[#050816] shadow-lg shadow-lift-strong bg-panel/60'
                     : isConnectHoverCandidate
                     ? 'hover:ring-2 hover:ring-ok hover:bg-ok-soft/40'
                     : isCurrentHop
-                    ? 'ring-2 ring-ok shadow-lg shadow-black/60'
+                    ? 'ring-2 ring-ok shadow-lg shadow-lift-strong'
                     : 'hover:bg-panel/40'
                 }`}
               >
@@ -1471,7 +1471,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
                 >
                   {device.name}
                 </span>
-                <span className="text-[10px] text-ink-muted font-mono mt-0.5 bg-[#050816]/90 px-1 rounded">
+                <span className="text-[10px] text-ink-muted font-mono mt-0.5 bg-base/90 px-1 rounded">
                   {device.ipAddress}
                 </span>
               </div>
@@ -1585,7 +1585,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
       {selectedDeviceIds.length > 1 && (
         <div
           id="multi-selection-actions-bar"
-          className="absolute top-4 left-1/2 -translate-x-1/2 bg-panel/95 backdrop-blur-md border border-accent/60 rounded-xl px-4 py-2 text-xs text-accent-ink flex items-center space-x-3 shadow-2xl z-30 animate-in fade-in"
+          className="absolute top-4 left-1/2 -translate-x-1/2 bg-panel/95 backdrop-blur-md border border-accent/60 rounded-xl px-4 py-2 text-xs text-ink flex items-center space-x-3 shadow-2xl z-30 animate-in fade-in"
         >
           <span className="font-bold text-accent font-mono">
             {selectedDeviceIds.length} Devices Selected
@@ -1648,7 +1648,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
       {isConnectMode && (
         <div
           id="connect-mode-banner"
-          className="absolute top-4 left-1/2 -translate-x-1/2 bg-accent-soft/90 backdrop-blur-md border border-accent/60 rounded-full px-4 py-1.5 text-xs text-accent font-medium flex items-center space-x-2 shadow-xl shadow-black/50 z-30 animate-pulse"
+          className="absolute top-4 left-1/2 -translate-x-1/2 bg-accent-soft/90 backdrop-blur-md border border-accent/60 rounded-full px-4 py-1.5 text-xs text-accent font-medium flex items-center space-x-2 shadow-xl shadow-lift-strong z-30 animate-pulse"
         >
           <span className="w-2 h-2 rounded-full bg-accent animate-ping" />
           <span>

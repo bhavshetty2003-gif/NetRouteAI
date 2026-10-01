@@ -94,7 +94,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
   return (
     <div
       id="home-landing-root"
-      className="min-h-screen bg-[#050816] text-ink flex flex-col font-sans selection:bg-accent/30 selection:text-accent relative overflow-x-hidden bg-grid-pattern"
+      className="min-h-screen bg-base text-ink flex flex-col font-sans selection:bg-accent/30 selection:text-accent relative overflow-x-hidden bg-grid-pattern"
     >
       {/* Dynamic Ambient Background Glows spanning full sides */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-accent/10 rounded-full blur-3xl pointer-events-none -z-10" />
@@ -108,11 +108,11 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
       >
         {/* Brand with Status */}
         <div className="flex items-center space-x-3">
-          <div className="p-2 rounded-xl bg-gradient-to-br from-accent-soft to-base border border-accent/40 text-accent shadow-md shadow-black/60">
+          <div className="p-2 rounded-xl bg-gradient-to-br from-accent-soft to-base border border-accent/40 text-accent shadow-md shadow-lift-strong">
             <Network className="w-5 h-5 text-accent" />
           </div>
           <div className="flex items-center space-x-2">
-            <span className="text-lg sm:text-xl font-extrabold tracking-tight text-accent-ink font-sans">
+            <span className="text-lg sm:text-xl font-extrabold tracking-tight text-ink font-sans">
               NetRoute<span className="text-accent font-mono">AI</span>
             </span>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-accent-soft text-accent border border-accent font-semibold">
@@ -126,7 +126,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
           <button
             id="nav-login-btn"
             onClick={() => setLoginModalOpen(true)}
-            className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink text-xs font-bold shadow-md shadow-black/20 hover:shadow-black/40 transition-all cursor-pointer"
+            className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink text-xs font-bold shadow-md shadow-lift hover:shadow-lift-strong transition-all cursor-pointer"
           >
             <LogIn className="w-4 h-4" />
             <span>Login to NetRouteAI</span>
@@ -138,12 +138,12 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
       <main className="flex-1 flex flex-col w-full max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-10 py-8 lg:py-12">
         {/* Top Centered Headline */}
         <div className="text-center max-w-4xl mx-auto mb-10">
-          <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-accent-soft/80 border border-accent/40 text-accent text-xs font-mono mb-5 shadow-sm shadow-black/50">
+          <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-accent-soft/80 border border-accent/40 text-accent text-xs font-mono mb-5 shadow-sm shadow-lift-strong">
             <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
             <span className="font-semibold tracking-wide">Visual Topology Simulation & AI Predictive Routing</span>
           </div>
 
-          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-accent-ink tracking-tight leading-[1.15]">
+          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-ink tracking-tight leading-[1.15]">
             Build, Configure & Simulate Networks{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent via-info to-ok">
               Visually with AI
@@ -158,7 +158,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
             <button
               id="hero-login-entry-btn"
               onClick={() => setLoginModalOpen(true)}
-              className="group flex items-center space-x-2.5 px-8 py-3.5 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink font-bold text-sm shadow-xl shadow-black/25 hover:shadow-black/40 transition-all duration-200 cursor-pointer active:scale-98"
+              className="group flex items-center space-x-2.5 px-8 py-3.5 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink font-bold text-sm shadow-xl shadow-lift hover:shadow-lift-strong transition-all duration-200 cursor-pointer active:scale-98"
             >
               <LogIn className="w-4 h-4 text-accent-ink" />
               <span>Login to NetRouteAI</span>
@@ -346,7 +346,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
                 {/* Node 3: Core Router */}
                 <div className="flex flex-col items-center space-y-1.5">
                   <div className={`p-3.5 rounded-xl bg-panel border text-ok shadow-lg ${
-                    activeTabPreview === 'ai' ? 'border-accent shadow-black/60' : 'border-line'
+                    activeTabPreview === 'ai' ? 'border-accent shadow-lift-strong' : 'border-line'
                   }`}>
                     <Network className="w-5 h-5 text-ok" />
                   </div>
@@ -382,19 +382,19 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
               {/* What the toggle is actually choosing between -- no invented figures. */}
               <div className="p-3 rounded-xl bg-panel/80 border border-line text-xs font-mono grid grid-cols-3 gap-2 text-center">
                 <div>
-                  <div className="text-[10px] text-accent-ink uppercase">Method</div>
+                  <div className="text-[10px] text-ink-muted uppercase">Method</div>
                   <div className="text-accent font-bold mt-0.5">
                     {activeTabPreview === 'ai' ? 'Random Forest' : 'OSPF'}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-accent-ink uppercase">Chosen by</div>
+                  <div className="text-[10px] text-ink-muted uppercase">Chosen by</div>
                   <div className="text-ink font-bold mt-0.5">
                     {activeTabPreview === 'ai' ? 'measured features' : 'interface cost'}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-accent-ink uppercase">Effect</div>
+                  <div className="text-[10px] text-ink-muted uppercase">Effect</div>
                   <div className="text-info font-bold mt-0.5">static routes</div>
                 </div>
               </div>
@@ -569,7 +569,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
       </main>
 
       {/* Modern High-Tech Footer */}
-      <footer className="py-6 border-t border-line/80 bg-panel/60 text-xs text-accent-ink font-mono text-center">
+      <footer className="py-6 border-t border-line/80 bg-panel/60 text-xs text-ink-muted font-mono text-center">
         <div className="max-w-[1440px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>NetRouteAI • Visual Network Topology Designer & AI Packet Simulator</span>
           <span className="text-ink-muted">RFC 2328 OSPF • FRRouting • Cisco IOS Compatible</span>
@@ -586,7 +586,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
             {/* Close Button */}
             <button
               onClick={() => setLoginModalOpen(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-ink-muted hover:text-accent-ink hover:bg-raised transition-colors cursor-pointer"
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-ink-muted hover:text-accent hover:bg-raised transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -596,7 +596,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
               <div className="inline-flex p-3 rounded-2xl bg-accent-soft border border-accent/40 text-accent shadow-lg">
                 <Network className="w-6 h-6 text-accent" />
               </div>
-              <h2 className="text-xl font-bold text-accent-ink tracking-tight">Login to NetRouteAI</h2>
+              <h2 className="text-xl font-bold text-ink tracking-tight">Login to NetRouteAI</h2>
               <p className="text-xs text-ink-muted">
                 Enter your credentials or click instant access to launch the Network Designer workspace.
               </p>
@@ -638,7 +638,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
               <button
                 type="submit"
                 disabled={isLoggingIn}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink font-bold text-xs shadow-lg shadow-black/20 transition-all cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50"
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink font-bold text-xs shadow-lg shadow-lift transition-all cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50"
               >
                 {isLoggingIn ? (
                   <>

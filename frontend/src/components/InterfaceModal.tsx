@@ -90,7 +90,7 @@ export const InterfaceModal: React.FC<InterfaceModalProps> = ({
         {/* Interface List */}
         <div id="interface-list" className="p-5 max-h-80 overflow-y-auto space-y-2">
           {device.interfaces.length === 0 ? (
-            <div className="text-center py-6 text-sm text-accent-ink">No interfaces available on this device.</div>
+            <div className="text-center py-6 text-sm text-ink-muted">No interfaces available on this device.</div>
           ) : (
             device.interfaces.map((iface) => {
               const isOccupied = !!iface.connectedTo;
@@ -104,7 +104,7 @@ export const InterfaceModal: React.FC<InterfaceModalProps> = ({
                   onClick={() => onSelectInterface(iface)}
                   className={`w-full flex items-center justify-between p-3 rounded-lg border text-left transition-all ${
                     isOccupied
-                      ? 'bg-panel/60 border-line opacity-50 cursor-not-allowed text-accent-ink'
+                      ? 'bg-panel/60 border-line opacity-50 cursor-not-allowed text-ink-faint'
                       : 'bg-panel/80 hover:bg-accent-soft/50 hover:border-accent/60 border-line/80 text-ink group cursor-pointer'
                   }`}
                 >
@@ -144,7 +144,7 @@ export const InterfaceModal: React.FC<InterfaceModalProps> = ({
         </div>
 
         {/* Footer info */}
-        <div className="px-5 py-3 bg-panel border-t border-line text-xs text-accent-ink flex items-center justify-between">
+        <div className="px-5 py-3 bg-panel border-t border-line text-xs text-ink-muted flex items-center justify-between">
           <span>Total Interfaces: {device.interfaces.length}</span>
           <span>Unavailable / in-use ports are disabled</span>
         </div>

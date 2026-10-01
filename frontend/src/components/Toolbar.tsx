@@ -86,7 +86,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           onClick={onToggleDrawingPalette}
           className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
             isDrawingPaletteOpen
-              ? 'bg-accent/20 text-accent border border-accent/80 shadow-md shadow-black/50'
+              ? 'bg-accent/20 text-accent border border-accent/80 shadow-md shadow-lift-strong'
               : 'bg-panel hover:bg-overlay text-ink border border-line'
           }`}
           title="Open Drawing Palette (Annotations, Shapes & Text Labels)"
@@ -131,8 +131,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           disabled={isAiAnalyzing}
           className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
             isAiAnalyzing
-              ? 'bg-ai/80 text-ink cursor-wait'
-              : 'bg-gradient-to-r from-ai to-info hover:from-ai hover:to-info text-ink shadow-md shadow-black/40'
+              ? 'bg-ai/80 text-accent-ink cursor-wait'
+              : 'bg-gradient-to-r from-ai to-info hover:from-ai hover:to-info text-accent-ink shadow-md shadow-lift-strong'
           }`}
           title="Send topology to AI engine for route analysis"
         >
@@ -147,8 +147,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           disabled={isSimulating}
           className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
             isSimulating
-              ? 'bg-warn-soft/80 text-accent-ink cursor-wait'
-              : 'bg-gradient-to-r from-ok to-info hover:from-ok hover:to-info text-accent-ink shadow-md shadow-black/40'
+              ? 'bg-warn-soft/80 text-warn cursor-wait'
+              : 'bg-gradient-to-r from-ok to-info hover:from-ok hover:to-info text-accent-ink shadow-md shadow-lift-strong'
           }`}
           title="Choose Source and Target to transmit glowing data frames"
         >

@@ -3,69 +3,196 @@
 /* ==================================================================
    NetRouteAI design system
    ------------------------------------------------------------------
-   A single dark theme, applied consistently. The previous UI mixed dark
-   surfaces (slate-900) with light chrome (bg-white) while keeping
-   dark-theme text colors, so `text-cyan-400` on white rendered at about
-   2:1 contrast -- effectively invisible. Every colour below is chosen so
-   that its intended pairing clears WCAG AA (4.5:1 for body text, 3:1 for
-   large text and UI borders).
+   Two themes, both driven by the same token names, so a component is
+   written once and works in either. `:root` is the light theme (a warm
+   cream base); `.dark` overrides the same variables.
+
+   Why the themes are declared as plain CSS variables rather than only in
+   `@theme`: Tailwind v4's `@theme` emits its variables once at `:root`
+   and cannot be scoped to a selector, so a second theme needs its own
+   declaration. `--nra-*` holds the actual per-theme values and
+   `@theme inline` republishes them as `--color-*`, which is what makes
+   `bg-panel` / `text-ink` follow the cascade in both themes.
 
    Rules that fall out of the scale:
-     * surfaces get darker as they go "down" a layer, never lighter
-     * `text-ink` is the default reading colour on every surface
-     * accents are used for emphasis and state, never for body text on
-       a light surface (there are no light surfaces)
+     * in dark mode surfaces get darker going "down" a layer; in light
+       mode they get warmer/darker going down. Either way `base` is the
+       page and `overlay` is the topmost interactive surface.
+     * `text-ink` is the default reading colour on every surface.
+     * `accent-ink` is *fill ink*: text drawn ON a bright accent/status
+       fill, never on a surface. Using it for a heading renders a
+       near-black word on a near-black background. `audit_contrast.py`
+       now checks it against surfaces for exactly this reason.
+
+   Values are plain hex rather than oklch() so contrast is verifiable by
+   exact sRGB math with no colour-space conversion, by
+   `scripts/audit_contrast.py`. Every pairing in BOTH themes is checked.
    ================================================================== */
 
-/* Values are plain hex rather than oklch() so that contrast is verifiable
-   by eye and by `scripts/audit_contrast.py` without a colour-conversion
-   round trip. Every pairing below is checked against WCAG AA. */
-@theme {
-  /* -- Surfaces: darkest (deepest background) to lightest (topmost) --- */
-  --color-base: #0b1120;        /* app background        */
-  --color-panel: #131c2e;       /* sidebars, toolbars    */
-  --color-raised: #1b2537;      /* cards, modals         */
-  --color-overlay: #243147;     /* popovers, hovers      */
-  --color-sunken: #080e1a;      /* wells, inset areas    */
+/* ---------------------------- light (cream) ------------------------- */
+:root {
+  color-scheme: light;
 
-  /* -- Borders: two visible tiers ------------------------------------ */
-  --color-line: #36445e;         /* default divider       */
-  --color-line-strong: #435570;  /* active / emphasised   */
+  /* Surfaces: the page, then panels, cards, hovers, wells. */
+  --nra-base: #fdf6ef;
+  --nra-panel: #fffaf5;
+  --nra-raised: #ffffff;
+  --nra-overlay: #f8ece2;
+  --nra-sunken: #f4e5d8;
 
-  /* -- Ink: reading text, four tiers --------------------------------- */
-  --color-ink: #f1f5f9;          /* 17.2:1 on base        */
-  --color-ink-soft: #cbd5e1;     /* 12.7:1 body text      */
-  --color-ink-muted: #94a3b8;    /*  7.3:1 labels, meta   */
-  --color-ink-faint: #7c8ba1;    /*  5.4:1 decorative     */
+  /* Borders */
+  --nra-line: #dcc5b0;
+  --nra-line-strong: #bf9f83;
 
-  /* -- Accent: primary action colour --------------------------------- */
-  --color-accent: #22d3ee;        /* bright cyan           */
-  --color-accent-deep: #06b6d4;   /* hover                 */
-  --color-accent-soft: #0e3a4a;   /* tinted background     */
-  --color-accent-ink: #04222b;    /* 9.2:1 on accent fill  */
+  /* Ink: warm browns, darkest first. */
+  --nra-ink: #2a1a12;
+  --nra-ink-soft: #4b3527;
+  --nra-ink-muted: #6a5040;
+  --nra-ink-faint: #876a54;
 
-  /* -- Status: green / amber / red, all AA on every surface --------- */
-  --color-ok: #34d399;
-  --color-ok-soft: #0b3b2e;
-  --color-warn: #fbbf24;
-  --color-warn-soft: #3f3110;
-  --color-bad: #fda4af;
-  --color-bad-soft: #45121f;
-  --color-info: #7dabf8;
-  --color-info-soft: #12294d;
-  --color-ai: #cbb0fc;            /* AI / model marker     */
-  --color-ai-soft: #33194d;
+  /* Accent: deep teal, readable as text on cream. */
+  --nra-accent: #0d6e85;
+  --nra-accent-deep: #0a5567;
+  --nra-accent-soft: #d2edf4;
+  --nra-accent-ink: #ffffff;
+
+  /* Elevation. A black shadow at 40-60% is nearly invisible on a dark
+     surface and far too heavy on cream, so its strength is a per-theme
+     value rather than a literal in ~25 call sites. */
+  --nra-shadow: rgba(74, 52, 38, 0.22);
+  --nra-shadow-strong: rgba(74, 52, 38, 0.4);
+
+  /* Status: deepened so each clears 4.5:1 as text on cream. */
+  --nra-ok: #0f7048;
+  --nra-ok-soft: #d5f0e2;
+  --nra-warn: #8a5400;
+  --nra-warn-soft: #fbeccd;
+  --nra-bad: #ad2439;
+  --nra-bad-soft: #fadcdf;
+  --nra-info: #27539f;
+  --nra-info-soft: #dbe7f8;
+  --nra-ai: #6437a8;
+  --nra-ai-soft: #e9ddf8;
+}
+
+/* ------------------------------ dark (default) ---------------------- */
+.dark {
+  color-scheme: dark;
+
+  --nra-base: #0b1120;
+  --nra-panel: #131c2e;
+  --nra-raised: #1b2537;
+  --nra-overlay: #243147;
+  --nra-sunken: #080e1a;
+
+  --nra-line: #36445e;
+  --nra-line-strong: #435570;
+
+  --nra-ink: #f1f5f9;
+  --nra-ink-soft: #cbd5e1;
+  --nra-ink-muted: #94a3b8;
+  --nra-ink-faint: #7c8ba1;
+
+  --nra-accent: #22d3ee;
+  --nra-accent-deep: #06b6d4;
+  --nra-accent-soft: #0e3a4a;
+  --nra-accent-ink: #04222b;
+
+  --nra-shadow: rgba(0, 0, 0, 0.5);
+  --nra-shadow-strong: rgba(0, 0, 0, 0.65);
+
+  --nra-ok: #34d399;
+  --nra-ok-soft: #0b3b2e;
+  --nra-warn: #fbbf24;
+  --nra-warn-soft: #3f3110;
+  --nra-bad: #fda4af;
+  --nra-bad-soft: #45121f;
+  --nra-info: #7dabf8;
+  --nra-info-soft: #12294d;
+  --nra-ai: #cbb0fc;
+  --nra-ai-soft: #33194d;
+}
+
+/* ------------------------- console (theme-invariant) ------------------
+   A device terminal is dark whichever theme the surrounding chrome uses, so
+   these are declared once and deliberately not overridden by `.dark`. They
+   still need their own ink: the CLI modal painted its output with
+   `text-ink`/`text-ok`/`text-bad`, which are reading colours chosen for the
+   page surface. In the cream theme those are dark browns and the whole
+   transcript went black-on-black. */
+:root {
+  --nra-console: #05090f;
+  --nra-console-raised: #0d1620;
+  --nra-console-line: #1e2c3a;
+  --nra-console-ink: #dbe4ee;
+  --nra-console-muted: #93a4b8;
+  --nra-console-accent: #22d3ee;
+  --nra-console-ok: #34d399;
+  --nra-console-bad: #fda4af;
+  --nra-console-warn: #fbbf24;
+}
+
+/* Republish the per-theme values under the names Tailwind generates
+   utilities from. `inline` makes each utility emit `var(--nra-*)` rather
+   than copying the value, which is what lets the same class follow the
+   active theme. */
+@theme inline {
+  --color-base: var(--nra-base);
+  --color-panel: var(--nra-panel);
+  --color-raised: var(--nra-raised);
+  --color-overlay: var(--nra-overlay);
+  --color-sunken: var(--nra-sunken);
+
+  --color-line: var(--nra-line);
+  --color-line-strong: var(--nra-line-strong);
+
+  --color-ink: var(--nra-ink);
+  --color-ink-soft: var(--nra-ink-soft);
+  --color-ink-muted: var(--nra-ink-muted);
+  --color-ink-faint: var(--nra-ink-faint);
+
+  --color-accent: var(--nra-accent);
+  --color-accent-deep: var(--nra-accent-deep);
+  --color-accent-soft: var(--nra-accent-soft);
+  --color-accent-ink: var(--nra-accent-ink);
+
+  --color-ok: var(--nra-ok);
+  --color-ok-soft: var(--nra-ok-soft);
+  --color-warn: var(--nra-warn);
+  --color-warn-soft: var(--nra-warn-soft);
+  --color-bad: var(--nra-bad);
+  --color-bad-soft: var(--nra-bad-soft);
+  --color-info: var(--nra-info);
+  --color-info-soft: var(--nra-info-soft);
+  --color-ai: var(--nra-ai);
+  --color-ai-soft: var(--nra-ai-soft);
+
+  --color-console: var(--nra-console);
+  --color-console-raised: var(--nra-console-raised);
+  --color-console-line: var(--nra-console-line);
+  --color-console-ink: var(--nra-console-ink);
+  --color-console-muted: var(--nra-console-muted);
+  --color-console-accent: var(--nra-console-accent);
+  --color-console-ok: var(--nra-console-ok);
+  --color-console-bad: var(--nra-console-bad);
+  --color-console-warn: var(--nra-console-warn);
 }
 
 @layer base {
+  /* Applied by the theme toggle before first paint, so a reload never
+     flashes the wrong theme. The class also drives colour-scheme, which
+     is what makes native scrollbars and form controls follow. */
   html {
+    color-scheme: light;
+  }
+  html.dark {
     color-scheme: dark;
   }
 
   body {
     margin: 0;
-    background-color: var(--color-base);
-    color: var(--color-ink-soft);
+    background-color: var(--nra-base);
+    color: var(--nra-ink-soft);
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont,
       'Segoe UI', Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -83,20 +210,20 @@
   /* A visible focus ring everywhere, so keyboard users can see where they
      are. The default outline is removed only where this replaces it. */
   :focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--nra-accent);
     outline-offset: 2px;
     border-radius: 4px;
   }
 
   ::selection {
-    background: var(--color-accent-soft);
-    color: var(--color-ink);
+    background: var(--nra-accent-soft);
+    color: var(--nra-ink);
   }
 
   /* Scrollbars were invisible against the dark chrome. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: var(--color-line-strong) transparent;
+    scrollbar-color: var(--nra-line-strong) transparent;
   }
   *::-webkit-scrollbar {
     width: 10px;
@@ -106,12 +233,12 @@
     background: transparent;
   }
   *::-webkit-scrollbar-thumb {
-    background-color: var(--color-line-strong);
+    background-color: var(--nra-line-strong);
     border-radius: 999px;
-    border: 2px solid var(--color-base);
+    border: 2px solid var(--nra-base);
   }
   *::-webkit-scrollbar-thumb:hover {
-    background-color: var(--color-accent-deep);
+    background-color: var(--nra-accent);
   }
 }
 
@@ -136,7 +263,7 @@
            disabled:opacity-45 disabled:cursor-not-allowed disabled:pointer-events-none;
   }
 
-  /* Primary: bright fill with dark ink -- the highest-contrast pairing. */
+  /* Primary: the accent fill, with the theme's fill ink on top of it. */
   .btn-primary {
     @apply bg-accent text-accent-ink hover:bg-accent-deep;
   }
@@ -203,6 +330,19 @@
   .pill-accent { @apply bg-accent-soft text-accent; }
   .pill-faint { @apply bg-sunken text-ink-muted border border-line; }
 
+  /* Elevation. Tailwind v4's `shadow-sm`/`md`/`lg`/`xl` build their blur from
+     `--tw-shadow` and their colour from `--tw-shadow-color`, so setting only
+     the colour composes with whichever size is in use. `shadow-lift-strong` was
+     used at ~25 call sites instead: invisible against a dark surface and
+     overpowering against cream, and a literal opacity in the class list
+     cannot respond to the theme. */
+  .shadow-lift {
+    --tw-shadow-color: var(--nra-shadow);
+  }
+  .shadow-lift-strong {
+    --tw-shadow-color: var(--nra-shadow-strong);
+  }
+
   /* Data table used by the analytics panels */
   .data-table {
     @apply w-full text-xs border-collapse;
@@ -219,10 +359,10 @@
   }
 }
 
-/* Subtle grid on the canvas, tuned to the new surface colours. */
+/* Subtle grid on the canvas, tuned to the surface colours. */
 .bg-grid-pattern {
   background-size: 36px 36px;
   background-image:
-    linear-gradient(to right, color-mix(in oklab, var(--color-accent) 6%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in oklab, var(--color-accent) 6%, transparent) 1px, transparent 1px);
+    linear-gradient(to right, color-mix(in oklab, var(--nra-accent) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--nra-accent) 8%, transparent) 1px, transparent 1px);
 }

@@ -12,6 +12,23 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet" />
+    <script>
+      // Applied before first paint. Without this the page renders dark, then
+      // snaps to light once React mounts and reads the stored preference --
+      // a visible flash on every reload for anyone who chose the cream theme.
+      (function () {
+        try {
+          var saved = localStorage.getItem('netrouteai_theme');
+          var prefersLight =
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: light)').matches;
+          var dark = saved ? saved === 'dark' : !prefersLight;
+          document.documentElement.classList.toggle('dark', dark);
+        } catch (e) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
