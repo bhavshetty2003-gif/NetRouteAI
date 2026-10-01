@@ -196,6 +196,47 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
     used_addresses: dict[str, str] = {}
     used_subnets: set[ipaddress.IPv4Network] = set()
 
+    # Reserve every subnet the caller already holds BEFORE allocating anything.
+    #
+    # Allocation is greedy and runs in list order, so without this a link that
+    # needs a fresh subnet takes the first free candidate even when a link
+    # further down the list is already sitting on it. That later link is then
+    # refused as a duplicate, and the whole plan fails even though a free subnet
+    # was available. Renumbering one link's class is what exposes it: clearing
+    # l6 (which comes early) to Class A made it claim 10.0.0.0/8 before l7, which
+    # already held it, had been considered.
+    #
+    # Reserving first makes the result independent of link order, which is the
+    # property the canvas needs -- a link's address depends on its own class and
+    # the set of addresses already held, not on where it happens to sit in the
+    # array.
+    #
+    # Overlap is checked, not just equality. Holding 10.0.0.0/24 and then
+    # allocating 10.0.0.0/8 gives two links the same host addresses, because
+    # every address in the /24 also sits inside the /8. The per-class blocks are
+    # disjoint by first octet, so this can only arise across a prefix boundary
+    # -- a supplied /24 inside an allocated /8 -- but it has to be caught, since
+    # the routers would be configured with two addresses for one interface.
+    held: list[tuple[ipaddress.IPv4Network, str]] = []
+    for raw in links_in:
+        supplied_subnet = str(raw.get("subnet") or "").strip()
+        supplied_source = str(raw.get("source_ip") or "").strip()
+        supplied_target = str(raw.get("target_ip") or "").strip()
+        if not (supplied_subnet or supplied_source or supplied_target):
+            continue
+        label = f"{raw.get('source')}–{raw.get('target')}"
+        name = str(raw.get("id") or label)
+        subnet = _subnet_from_supplied(supplied_subnet, supplied_source, supplied_target)
+        for other, owner in held:
+            if subnet.overlaps(other):
+                raise DeployError(
+                    f"Link {label} claims {subnet}, which overlaps {other} already "
+                    f"held by link {owner}"
+                )
+        held.append((subnet, name))
+    for subnet, _ in held:
+        used_subnets.add(subnet)
+
     for index, raw in enumerate(links_in):
         source = str(raw.get("source") or "").upper()
         target = str(raw.get("target") or "").upper()
@@ -376,12 +417,20 @@ def _addresses_for(
                 f"Link {raw.get('source')}–{raw.get('target')}: both ends were "
                 f"given the same address {source_ip}"
             )
-        _reserve_subnet(subnet, used_subnets, raw)
+        # Already reserved by the pre-pass, which is also where a genuine
+        # duplicate is reported -- re-checking here would flag this link's own
+        # subnet as a collision.
+        used_subnets.add(subnet)
         return str(subnet), source_ip, target_ip, address_class, mask_for_class(address_class)
 
     address_class = resolve_class(raw.get("address_class") or raw.get("ip_class"))
     for subnet in _class_candidates(address_class)[:_MAX_SUBNET_ATTEMPTS]:
-        if subnet in used_subnets:
+        # Overlap, not just equality: a candidate /8 must not swallow a /24 some
+        # other link already holds, or both links end up with the same host
+        # addresses. The per-class blocks are disjoint by first octet, so the
+        # only way to get here is a prefix boundary -- but a Class A link
+        # renumbered next to a supplied /24 in the same first octet is enough.
+        if any(subnet.overlaps(taken) for taken in used_subnets):
             continue
         used_subnets.add(subnet)
         hosts = list(subnet.hosts())
@@ -439,17 +488,6 @@ def _in_subnet(address, subnet, supplied: str) -> str:
             f"{supplied} is not a usable host address on subnet {subnet}"
         )
     return str(list(subnet.hosts())[_FIRST_HOST - 1])
-
-
-def _reserve_subnet(
-    subnet: ipaddress.IPv4Network, used: set[ipaddress.IPv4Network], raw: dict[str, Any]
-) -> None:
-    if subnet in used:
-        raise DeployError(
-            f"Link {raw.get('source')}–{raw.get('target')} reuses subnet {subnet}, "
-            f"which is already taken by another link"
-        )
-    used.add(subnet)
 
 
 def _claim(address: str, owner: str, used: dict[str, str]) -> None:

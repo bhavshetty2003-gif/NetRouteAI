@@ -55,7 +55,18 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
             <button
               key={cls}
               type="button"
-              onClick={() => onUpdateCable({ ...cable, addressClass: cls })}
+              // Changing the class means "renumber this link into a different
+              // range", so the held address has to go with it. A supplied
+              // address always wins in the allocator, which is what keeps the
+              // canvas and the routers in agreement -- so leaving the old
+              // subnet in place would make the button do nothing at all. Clearing
+              // it puts the link back in the unaddressed set, and the auto-plan
+              // reallocates from the chosen class's block straight away.
+              onClick={() => {
+                if (cls === addressClass) return;
+                const { subnet: _s, subnetMask: _m, sourceIp: _from, targetIp: _to, ...rest } = cable;
+                onUpdateCable({ ...rest, addressClass: cls } as NetworkCable);
+              }}
               className={`rounded border px-2 py-2 text-xs font-semibold transition-colors ${
                 addressClass === cls
                   ? 'border-accent bg-accent-soft text-accent'
@@ -70,7 +81,11 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
           ))}
         </div>
         <p className="text-xs text-ink-faint mt-1">
-          Mask is generated from the class: <span className="font-mono">{MASK_FOR_CLASS[addressClass]}</span>
+          The mask is generated from the class, never typed:{' '}
+          <span className="font-mono">{MASK_FOR_CLASS[addressClass]}</span>. Each class draws
+          from its own range (A: 10.x, B: 172.16+, C: 192.168.x), so links of
+          different classes can never be handed the same subnet. Changing the
+          class reallocates the address from the new range.
         </p>
       </div>
 
