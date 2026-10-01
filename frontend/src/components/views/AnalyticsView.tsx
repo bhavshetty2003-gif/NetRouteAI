@@ -349,6 +349,17 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
     live?.active.method === method ? live.active.steer : undefined;
   const steerable = steerForSelection ? steerForSelection.applicable : true;
   const methodAlreadyInEffect = live?.path_taken_matches?.[method] === true;
+  // Reverting is only meaningful while a static route is pinning this pair.
+  // Keyed off what the routers are actually forwarding, not off the current
+  // selection: steering to AI and then selecting OSPF leaves the AI path in
+  // effect until something removes it, and the button that does that has to
+  // stay available in exactly that state.
+  const somethingInjected =
+    live?.forwarding_method === 'ai' ||
+    // Only read a mismatch when the traced path is fully known: an unanswered
+    // hop leaves every match false, which would offer a revert for a pair
+    // nothing has been injected into.
+    (live?.path_taken_complete !== false && live?.path_taken_matches?.ospf === false);
   const queueDrops = ospfLinks.reduce((sum, l) => sum + (l.qdisc_drops || 0), 0);
   const interfaceErrors = ospfLinks.reduce((sum, l) => sum + (l.errors || 0), 0);
   const pathBandwidth = activeReport?.computed.bandwidth ?? null;
@@ -552,16 +563,28 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => applyMethod(true)}
-              disabled={steering || !steerable || methodAlreadyInEffect}
+              disabled={steering || method === 'ospf' || !steerable || methodAlreadyInEffect}
               className="btn-ai"
+              title={
+                method === 'ospf'
+                  ? 'The routers already forward OSPF. Nothing to install — use Revert to OSPF to drop anything pinned.'
+                  : methodAlreadyInEffect
+                    ? 'The routers are already forwarding this path'
+                    : 'Install static routes that pin this path on every hop'
+              }
             >
               {steering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
               Apply to lab
             </button>
             <button
               onClick={() => applyMethod(false)}
-              disabled={steering || method === 'ospf'}
+              disabled={steering || !somethingInjected}
               className="btn-secondary"
+              title={
+                somethingInjected
+                  ? 'Remove the static routes pinning this destination, so OSPF forwards it again'
+                  : 'Nothing is pinned: OSPF is already forwarding this pair'
+              }
             >
               Revert to OSPF
             </button>

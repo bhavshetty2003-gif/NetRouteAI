@@ -407,9 +407,14 @@ def lab_route(request: RouteSteerRequest):
 
     dest_ip = lab["ip_index"][destination]
 
-    if not request.apply:
-        # Revert: drop every static route pinning this destination, on any
-        # router, since a steered path installs one per hop.
+    # Revert, and "select OSPF", are the same operation. Both must actually
+    # remove the pinning static routes: the selection claiming "OSPF is already
+    # forwarding this" without checking left the AI path in effect, so the
+    # routers kept forwarding the path the user had just deselected. `apply`
+    # false and `method` "ospf" both mean "put OSPF back".
+    if not request.apply or request.method == "ospf":
+        # Drop every static route pinning this destination, on any router, since
+        # a steered path installs one per hop.
         removed: list[str] = []
         routers: list[str] = []
         # Only routers can hold a static route. Hosts and switches have no FRR
@@ -450,18 +455,6 @@ def lab_route(request: RouteSteerRequest):
                 if removed
                 else f"No static route was pinning {destination}; OSPF was already "
                 "forwarding it."
-            ),
-        }
-
-    if request.method == "ospf":
-        return {
-            "ok": True,
-            "applied": False,
-            "device": source,
-            "container": container,
-            "message": (
-                "OSPF is what the routers already forward with nothing injected, "
-                "so selecting it needs no change."
             ),
         }
 
