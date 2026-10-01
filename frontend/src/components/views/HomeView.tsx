@@ -1,26 +1,31 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Network,
   ArrowRight,
   LogIn,
   Lock,
   Mail,
-  Shield,
   Zap,
   Terminal,
   Layers,
-  CheckCircle2,
   X,
   Compass,
   Radio,
-  Activity,
-  Cpu,
   Server,
   Box,
-  TrendingDown,
   Sparkles,
-  GitBranch,
+  Loader2,
+  ServerOff,
+  TriangleAlert,
 } from 'lucide-react';
+import {
+  getLabStatus,
+  getDatasetStats,
+  getOspfAreas,
+  type DatasetStats,
+  type LabStatus,
+  type OspfAreaInventory,
+} from '../../utils/api';
 
 interface HomeViewProps {
   onLaunchDesigner: () => void;
@@ -37,6 +42,44 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
   const [password, setPassword] = useState('••••••••••••');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [activeTabPreview, setActiveTabPreview] = useState<'ai' | 'ospf'>('ai');
+
+  // Real state of the lab and of the trained model, read from the backend.
+  //
+  // This page used to show a convergence time of "< 0.4ms", a bridge list of
+  // "br-net0 ... br-net4", a latency of "18.8 ms" beside an AI figure of
+  // "12.4 ms (-34%)", and a jitter of "0.8 ms" -- none of which came from
+  // anywhere. A landing page is the first thing anyone sees and it was making
+  // specific performance claims about a lab that had not been asked anything.
+  // Everything below is either a fact read back from a running lab or an
+  // explicit statement that there is nothing to read yet.
+  const [lab, setLab] = useState<LabStatus | null>(null);
+  const [areas, setAreas] = useState<OspfAreaInventory | null>(null);
+  const [dataset, setDataset] = useState<DatasetStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  const loadStatus = useCallback(async () => {
+    setLoading(true);
+    setStatusError(null);
+    // Each read is independent: a lab that is down must not hide the model
+    // stats, and a missing area readout must not hide the device count.
+    const [labResult, areaResult, datasetResult] = await Promise.allSettled([
+      getLabStatus(),
+      getOspfAreas(),
+      getDatasetStats(),
+    ]);
+    setLab(labResult.status === 'fulfilled' ? labResult.value : null);
+    setAreas(areaResult.status === 'fulfilled' ? areaResult.value : null);
+    setDataset(datasetResult.status === 'fulfilled' ? datasetResult.value : null);
+    if (labResult.status === 'rejected') {
+      setStatusError(labResult.reason instanceof Error ? labResult.reason.message : String(labResult.reason));
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void loadStatus();
+  }, [loadStatus]);
 
   const handleLoginSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -138,32 +181,74 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
           
           {/* LEFT SIDE COLUMN: Container Automation & Device Stack (3 cols on lg) */}
           <div className="lg:col-span-3 flex flex-col space-y-4">
-            {/* Docker & FRRouting Status Card */}
+            {/* Docker & FRRouting Status Card -- everything read from the lab */}
             <div className="p-4 rounded-2xl bg-panel/80 border border-line/90 shadow-xl flex-1 flex flex-col justify-between">
               <div>
-                <div className="flex items-center space-x-2 pb-2.5 border-b border-line text-xs font-mono text-accent font-semibold">
-                  <Box className="w-4 h-4 text-accent" />
-                  <span>Docker & FRRouting Stack</span>
+                <div className="flex items-center justify-between space-x-2 pb-2.5 border-b border-line text-xs font-mono text-accent font-semibold">
+                  <span className="flex items-center space-x-2">
+                    <Box className="w-4 h-4 text-accent" />
+                    <span>Docker &amp; FRRouting Stack</span>
+                  </span>
+                  {loading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-ink-faint" />
+                  ) : (
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${
+                        lab?.online
+                          ? 'text-ok border-ok/40 bg-ok/10'
+                          : 'text-ink-muted border-line bg-panel'
+                      }`}
+                    >
+                      {lab?.online ? 'running' : 'not running'}
+                    </span>
+                  )}
                 </div>
+
+                {statusError && (
+                  <div className="mt-3 flex items-start gap-1.5 p-2 rounded-lg bg-bad/10 border border-bad/30">
+                    <TriangleAlert className="w-3.5 h-3.5 text-bad shrink-0 mt-0.5" />
+                    <span className="text-[10px] text-ink-muted font-mono break-words">{statusError}</span>
+                  </div>
+                )}
 
                 <div className="mt-3 space-y-2.5 text-xs">
                   <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                    <span className="text-ink-muted font-mono">Routing Daemons:</span>
-                    <span className="text-ok font-bold font-mono">ospfd / bgpd</span>
+                    <span className="text-ink-muted font-mono">Devices up:</span>
+                    <span className="text-ok font-bold font-mono">
+                      {lab?.online ? `${lab.device_count}` : '—'}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                    <span className="text-ink-muted font-mono">Convergence:</span>
-                    <span className="text-accent font-bold font-mono">&lt; 0.4ms</span>
+                    <span className="text-ink-muted font-mono">Links:</span>
+                    <span className="text-ink font-mono">
+                      {lab?.online
+                        ? `${lab.link_count} (${lab.transit_links} transit, ${lab.lan_links} LAN)`
+                        : '—'}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                    <span className="text-ink-muted font-mono">Isolated Bridges:</span>
-                    <span className="text-ink font-mono">br-net0 ... br-net4</span>
+                    <span className="text-ink-muted font-mono">OSPF areas:</span>
+                    <span className="text-ink font-mono">
+                      {areas?.areas?.length
+                        ? `${areas.areas.length} (${areas.areas.join(', ')})`
+                        : lab?.online
+                          ? '—'
+                          : 'no lab'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
+                    <span className="text-ink-muted font-mono">ABRs:</span>
+                    <span className="text-ink font-mono">
+                      {areas?.abrs?.length ? areas.abrs.join(', ') : '—'}
+                    </span>
                   </div>
                 </div>
               </div>
 
               <div className="mt-4 pt-3 border-t border-line/80 text-[11px] text-ink-muted font-mono">
-                Multi-node virtual network isolation with live kernel packet forwarding.
+                Areas and ABRs are read from <span className="text-ink-faint">show ip ospf interface</span> on
+                the running routers. Convergence time is measured on demand, on the Analytics page, by
+                cutting a link and timing the failover.
               </div>
             </div>
 
@@ -234,7 +319,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
                     <Radio className="w-5 h-5 text-accent" />
                   </div>
                   <span className="font-bold text-ink text-xs">PC-1</span>
-                  <span className="text-[10px] text-ink-muted">192.168.1.10</span>
+                  <span className="text-[10px] text-ink-muted">a host on a LAN</span>
                 </div>
 
                 {/* Link 1 */}
@@ -249,7 +334,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
                     <Layers className="w-5 h-5 text-info" />
                   </div>
                   <span className="font-bold text-ink text-xs">SW-2960</span>
-                  <span className="text-[10px] text-ink-muted">VLAN 10</span>
+                  <span className="text-[10px] text-ink-muted">one access VLAN</span>
                 </div>
 
                 {/* Link 2 */}
@@ -267,7 +352,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
                   </div>
                   <span className="font-bold text-ink text-xs">R1-2911</span>
                   <span className="text-[10px] text-accent font-semibold">
-                    {activeTabPreview === 'ai' ? 'AI Optimized' : 'OSPF Cost: 10'}
+                    {activeTabPreview === 'ai' ? 'AI path selected' : 'OSPF path selected'}
                   </span>
                 </div>
 
@@ -282,28 +367,35 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
                   <div className="p-3.5 rounded-xl bg-panel border border-line text-accent shadow-md">
                     <Terminal className="w-5 h-5 text-accent" />
                   </div>
-                  <span className="font-bold text-ink text-xs">Gateway</span>
-                  <span className="text-[10px] text-ink-muted">10.0.0.1</span>
+                  <span className="font-bold text-ink text-xs">Destination</span>
+                  <span className="text-[10px] text-ink-muted">beyond the lab</span>
                 </div>
               </div>
 
-              {/* Performance Comparison Strip */}
+              {/* An illustration of the two methods, deliberately carrying no numbers.
+                  The real figures are measured per pair and printed with the command
+                  that produced them on the Analytics page. */}
+              <p className="mt-1 text-[10px] font-mono text-ink-faint text-center">
+                Illustration only — the addresses and metrics on a real run come from the lab.
+              </p>
+
+              {/* What the toggle is actually choosing between -- no invented figures. */}
               <div className="p-3 rounded-xl bg-panel/80 border border-line text-xs font-mono grid grid-cols-3 gap-2 text-center">
                 <div>
-                  <div className="text-[10px] text-accent-ink uppercase">Routing Metric</div>
+                  <div className="text-[10px] text-accent-ink uppercase">Method</div>
                   <div className="text-accent font-bold mt-0.5">
-                    {activeTabPreview === 'ai' ? 'Predictive Jitter' : 'Static Hop Cost'}
+                    {activeTabPreview === 'ai' ? 'Random Forest' : 'OSPF'}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-accent-ink uppercase">Simulated Latency</div>
-                  <div className="text-ok font-bold mt-0.5">
-                    {activeTabPreview === 'ai' ? '12.4 ms (-34%)' : '18.8 ms'}
+                  <div className="text-[10px] text-accent-ink uppercase">Chosen by</div>
+                  <div className="text-ink font-bold mt-0.5">
+                    {activeTabPreview === 'ai' ? 'measured features' : 'interface cost'}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-accent-ink uppercase">Packet Loss</div>
-                  <div className="text-info font-bold mt-0.5">0.00%</div>
+                  <div className="text-[10px] text-accent-ink uppercase">Effect</div>
+                  <div className="text-info font-bold mt-0.5">static routes</div>
                 </div>
               </div>
             </div>
@@ -311,66 +403,119 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
 
           {/* RIGHT SIDE COLUMN: AI Predictive Engine & Cisco CLI Terminal (3 cols on lg) */}
           <div className="lg:col-span-3 flex flex-col space-y-4">
-            {/* AI Optimization Telemetry Deck */}
+            {/* The trained model, described by what it has actually been given */}
             <div className="p-4 rounded-2xl bg-panel/80 border border-line/90 shadow-xl flex-1 flex flex-col justify-between">
               <div>
-                <div className="flex items-center space-x-2 pb-2.5 border-b border-line text-xs font-mono text-ok font-semibold">
-                  <Zap className="w-4 h-4 text-ok" />
-                  <span>AI Telemetry Engine</span>
+                <div className="flex items-center justify-between space-x-2 pb-2.5 border-b border-line text-xs font-mono text-ok font-semibold">
+                  <span className="flex items-center space-x-2">
+                    <Zap className="w-4 h-4 text-ok" />
+                    <span>Random Forest Model</span>
+                  </span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${
+                      dataset?.ready_for_training
+                        ? 'text-ok border-ok/40 bg-ok/10'
+                        : 'text-warn border-warn/40 bg-warn/10'
+                    }`}
+                  >
+                    {dataset?.ready_for_training ? 'ready' : 'needs rows'}
+                  </span>
                 </div>
 
-                <div className="mt-3 space-y-2.5 text-xs font-mono">
-                  <div>
-                    <div className="flex justify-between text-ink-muted text-[11px] mb-1">
-                      <span>Latency Reduction</span>
-                      <span className="text-ok font-bold">-34.2%</span>
+                {dataset ? (
+                  <div className="mt-3 space-y-2.5 text-xs font-mono">
+                    <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
+                      <span className="text-ink-muted">Training rows:</span>
+                      <span className="text-ok font-bold">{dataset.total}</span>
                     </div>
-                    <div className="w-full h-1.5 bg-panel rounded-full overflow-hidden">
-                      <div className="w-3/4 h-full bg-gradient-to-r from-info to-ok rounded-full" />
+                    <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
+                      <span className="text-ink-muted">Measured:</span>
+                      <span className="text-ink font-bold">
+                        {dataset.measured} ({(dataset.measured_ratio * 100).toFixed(0)}%)
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
+                      <span className="text-ink-muted">Balanced seed:</span>
+                      <span className="text-ink font-bold">{dataset.synthetic}</span>
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-ink-muted text-[11px] mb-1">
+                        <span>Class balance</span>
+                        <span className="text-ink font-bold">{Object.keys(dataset.labels).length} classes</span>
+                      </div>
+                      <div className="space-y-1">
+                        {Object.entries(dataset.labels).map(([label, n]) => (
+                          <div key={label} className="flex items-center gap-2">
+                            <span className="text-[10px] text-ink-faint w-10 shrink-0">{label}</span>
+                            <div className="flex-1 h-1.5 bg-panel rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-r from-info to-ok rounded-full"
+                                style={{
+                                  width: `${
+                                    dataset.total
+                                      ? Math.max(2, (n / Math.max(...Object.values(dataset.labels))) * 100)
+                                      : 0
+                                  }%`,
+                                }}
+                              />
+                            </div>
+                            <span className="text-[10px] text-ink-muted w-8 text-right">{n}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
-
-                  <div>
-                    <div className="flex justify-between text-ink-muted text-[11px] mb-1">
-                      <span>Jitter Stability</span>
-                      <span className="text-accent font-bold">0.8 ms</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-panel rounded-full overflow-hidden">
-                      <div className="w-[88%] h-full bg-gradient-to-r from-accent to-info rounded-full" />
-                    </div>
+                ) : (
+                  <div className="mt-3 flex items-start gap-1.5 p-2 rounded-lg bg-warn/10 border border-warn/30">
+                    <ServerOff className="w-3.5 h-3.5 text-warn shrink-0 mt-0.5" />
+                    <span className="text-[10px] text-ink-muted font-mono">
+                      {loading ? 'Reading the model store…' : 'No dataset read yet.'}
+                    </span>
                   </div>
-
-                  <div>
-                    <div className="flex justify-between text-ink-muted text-[11px] mb-1">
-                      <span>Congestion Avoidance</span>
-                      <span className="text-info font-bold">Active</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-panel rounded-full overflow-hidden">
-                      <div className="w-[95%] h-full bg-accent rounded-full" />
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
 
               <div className="mt-4 pt-3 border-t border-line/80 text-[11px] text-ink-muted font-mono">
-                Multi-objective reinforcement model computes optimal forwarding paths.
+                Counts are from <span className="text-ink-faint">GET /api/dataset</span>. What the model
+                contributes to a figure — and what it does not — is spelled out per measurement on the
+                Analytics page.
               </div>
             </div>
 
-            {/* Cisco CLI Quick Card */}
+            {/* CLI card -- no invented transcript */}
             <div className="p-4 rounded-2xl bg-panel/80 border border-line/90 shadow-xl space-y-2">
               <div className="text-xs font-mono font-semibold text-ink-soft flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
                   <Terminal className="w-4 h-4 text-accent" />
-                  <span>Cisco IOS Terminal</span>
+                  <span>Router Terminal</span>
                 </div>
-                <span className="text-[10px] text-ok font-mono">READY</span>
+                <span className="text-[10px] text-ink-muted font-mono">
+                  {lab?.online ? 'lab up' : 'no lab'}
+                </span>
               </div>
-              <div className="p-2.5 rounded-lg bg-base text-ok font-mono text-[10px] leading-relaxed border border-line">
-                <p className="text-accent-ink"># show ip route ospf</p>
-                <p>O 192.168.2.0/24 [110/2] via 10.0.0.2</p>
-                <p>O 10.0.0.0/30 [110/1] via Gi0/0</p>
-                <p className="text-accent">Router(config)# _</p>
+              <div className="p-2.5 rounded-lg bg-base text-ink-muted font-mono text-[10px] leading-relaxed border border-line">
+                {lab?.online ? (
+                  <>
+                    <p className="text-ink-faint">Open any router in the designer to run commands.</p>
+                    <p className="text-ink-faint">
+                      <span className="text-ok">ping</span> runs for real from that router&apos;s container
+                      and prints the command&apos;s own output.
+                    </p>
+                    <p className="text-ink-faint">
+                      Available now:{' '}
+                      {lab.devices
+                        .filter((d) => d.type === 'router')
+                        .slice(0, 8)
+                        .map((d) => d.id)
+                        .join(', ')}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-ink-faint">
+                    Nothing to run commands against. Build the topology you drew and the routers become
+                    real containers you can ping from.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -392,9 +537,10 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
             <div className="w-9 h-9 rounded-xl bg-info-soft border border-info/30 flex items-center justify-center text-info">
               <Box className="w-5 h-5" />
             </div>
-            <h3 className="text-sm font-bold text-ink font-sans">Docker & FRRouting</h3>
+            <h3 className="text-sm font-bold text-ink font-sans">Docker &amp; FRRouting</h3>
             <p className="text-xs text-ink-muted leading-relaxed">
-              Automate multi-node Linux network topologies inside containerized environments with high-performance OSPF and BGP routing daemons.
+              The topology you draw becomes real routers in isolated containers running FRR, configured
+              with the same addresses, costs and OSPF areas shown on the canvas.
             </p>
           </div>
 
@@ -404,7 +550,8 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
             </div>
             <h3 className="text-sm font-bold text-ink font-sans">OSPF vs AI Path Routing</h3>
             <p className="text-xs text-ink-muted leading-relaxed">
-              Hop-by-hop packet simulation comparing classical Dijkstra SPF with AI predictive path routing across latency, jitter, packet loss, and throughput.
+              Compare the path OSPF actually forwards against the one a Random Forest picks, on latency,
+              jitter, loss, hop count and throughput — each read from the routers themselves.
             </p>
           </div>
 
@@ -412,9 +559,10 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
             <div className="w-9 h-9 rounded-xl bg-info-soft border border-info/30 flex items-center justify-center text-info">
               <Terminal className="w-5 h-5" />
             </div>
-            <h3 className="text-sm font-bold text-ink font-sans">Cisco IOS CLI & Config</h3>
+            <h3 className="text-sm font-bold text-ink font-sans">Router CLI &amp; Config</h3>
             <p className="text-xs text-ink-muted leading-relaxed">
-              Access real Cisco terminal modes: privilege level escalation, interface ip address assignments, no shutdown, running-config, and ICMP tests.
+              A per-device terminal for interface addresses and admin state, with a real <span className="font-mono">ping</span>{' '}
+              that runs from that router&apos;s container and prints the command&apos;s own output.
             </p>
           </div>
         </div>
