@@ -719,6 +719,62 @@ export default function App() {
     }
   }, [buildDeployPayload, adoptPlan]);
 
+  // The set of drawn links that have no address yet. This is the trigger for
+  // the automatic plan below: a newly drawn link is in here, and so is a link
+  // whose class or area the user just changed, and nothing else is.
+  const unaddressedKey = useMemo(
+    () =>
+      cables
+        .filter((c) => !c.subnet || !c.sourceIp || !c.targetIp)
+        .map((c) => c.id)
+        .sort()
+        .join(','),
+    [cables]
+  );
+  // The key we last asked the backend about. Guarding on this rather than on
+  // `isPlanning` alone is what stops a refusal from retrying forever: if the
+  // backend cannot allocate, the key is unchanged and nothing re-fires.
+  const plannedKeyRef = useRef<string>('');
+
+  // Ask for addresses the moment a link exists, rather than waiting for the
+  // "Plan addresses" button. A link that has been drawn and shows no IP reads
+  // as unfinished, and worse, the IP the user eventually sees has to be the one
+  // the routers get -- which is only guaranteed if the canvas is showing the
+  // backend's own allocation before a deploy is possible.
+  useEffect(() => {
+    if (!unaddressedKey || unaddressedKey === plannedKeyRef.current || isPlanning) return;
+    plannedKeyRef.current = unaddressedKey;
+    let cancelled = false;
+    (async () => {
+      setIsPlanning(true);
+      try {
+        const result = await previewAddresses(buildDeployPayload());
+        if (!cancelled) {
+          adoptPlan(result);
+          setLabMessage(null);
+        }
+        // Every link now has an address, so clear the guard and let a later edit
+        // (a new link, a changed class) trigger another pass.
+        plannedKeyRef.current = '';
+      } catch (err) {
+        plannedKeyRef.current = unaddressedKey;
+        if (!cancelled) {
+          setLabMessage({
+            kind: 'bad',
+            text: `Could not allocate an address for the new link: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          });
+        }
+      } finally {
+        if (!cancelled) setIsPlanning(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [unaddressedKey, buildDeployPayload, adoptPlan, isPlanning]);
+
   const handleDeploy = useCallback(async () => {
     setIsDeploying(true);
     setLabMessage(null);
