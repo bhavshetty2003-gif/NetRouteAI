@@ -842,17 +842,36 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
                 icon={<Timer className="w-4 h-4 text-warn" />}
                 label="Convergence time"
                 value={
-                  convergence?.convergence_ms !== null && convergence?.convergence_ms !== undefined
-                    ? `${convergence.convergence_ms.toFixed(0)} ms`
-                    : 'not measured'
+                  convergence?.destination_avoided_failed_link
+                    ? 'not applicable'
+                    : convergence?.alternate_path_exists === false
+                      ? 'no alternate route'
+                      : convergence?.convergence_ms !== null && convergence?.convergence_ms !== undefined
+                        ? `${convergence.convergence_ms.toFixed(0)} ms`
+                        : 'not measured'
                 }
                 detail={
                   convergence
-                    ? `Link ${convergence.link.container}/${convergence.link.interface} → ${convergence.detected ? 'recovered' : 'no recovery within timeout'}`
+                    ? `Link ${convergence.link.container}/${convergence.link.interface} → ${
+                        convergence.destination_avoided_failed_link
+                          ? `${source} → ${destination} never crossed it, so nothing failed over`
+                          : convergence.alternate_path_exists === false
+                            ? 'the only route between its ends — nothing to fail over to'
+                            : convergence.detected
+                              ? 'recovered'
+                              : 'no recovery within timeout'
+                      }`
                     : 'Breaks a live link and times recovery — opt in below'
                 }
                 source={convergence ? 'timed link-down + reachability poll' : undefined}
-                tone={convergence?.detected ? 'ok' : undefined}
+                tone={
+                  convergence?.destination_avoided_failed_link ||
+                  convergence?.alternate_path_exists === false
+                    ? undefined
+                    : convergence?.detected
+                      ? 'ok'
+                      : undefined
+                }
                 action={
                   <label className="btn-ghost !px-2 !py-1 text-[10px] cursor-pointer">
                     <input
@@ -885,8 +904,22 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
               <div className="flex items-center gap-3 text-[10px] font-mono text-ink-muted">
                 <span>measured {ago(live.measured_at)}</span>
                 {includeConvergence && convergence && (
-                  <span className={convergence.detected ? 'text-ok' : 'text-bad'}>
-                    convergence {convergence.convergence_ms?.toFixed(0) ?? '—'} ms
+                  <span
+                    className={
+                      convergence.destination_avoided_failed_link ||
+                      convergence.alternate_path_exists === false
+                        ? 'text-ink-muted'
+                        : convergence.detected
+                          ? 'text-ok'
+                          : 'text-bad'
+                    }
+                  >
+                    convergence{' '}
+                    {convergence.destination_avoided_failed_link
+                      ? 'n/a (link not on this path)'
+                      : convergence.alternate_path_exists === false
+                        ? 'n/a (no alternate route)'
+                        : `${convergence.convergence_ms?.toFixed(0) ?? '—'} ms`}
                   </span>
                 )}
               </div>
@@ -1067,6 +1100,11 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
                   label="convergence"
                   command={`ip link set ${convergence.link.interface} down on ${convergence.link.container}, then poll reachability`}
                 />
+              )}
+              {convergence?.note && (
+                <p className="text-[10px] font-mono text-ink-muted leading-snug">
+                  {convergence.note}
+                </p>
               )}
             </div>
           </div>

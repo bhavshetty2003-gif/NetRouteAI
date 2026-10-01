@@ -75,6 +75,12 @@ def measure_convergence(
     before = parse_link_stats(_demux(before_out))
     was_up = bool(before) and before[0]["state"] == "up"
 
+    # A link with no way round it cannot converge, and reporting that as a bare
+    # `detected: false` reads like a failed measurement. Whether the topology has
+    # a second route is knowable from the discovered links, so it is checked up
+    # front and the reason travels with the result.
+    no_alternate = not _has_alternate_path(lab, container_name, interface)
+
     # Baseline reachability before the change
     baseline = ping_source(2, 0.1)
 
@@ -83,16 +89,22 @@ def measure_convergence(
 
     recovered_after: float | None = None
     attempts = 0
-    while time.perf_counter() - started < timeout:
-        attempts += 1
-        probe = ping_source(1, 0.05)
-        if probe["reachable"]:
-            recovered_after = time.perf_counter() - started
-            break
-        time.sleep(poll_interval)
-
-    if was_up:
-        set_link_state(client, container_name, interface, up=True)
+    # The link comes back up whatever happens. Bringing it down is a temporary
+    # measurement, and leaving it down because the poll loop raised or was cut
+    # short would silently change the network for everything measured after --
+    # which is exactly what happened once: a timed-out run left R1's link to R2
+    # down, and the next measurement honestly reported a detour through R12 and
+    # R11 with no indication that anything had been injected.
+    try:
+        while time.perf_counter() - started < timeout:
+            attempts += 1
+            probe = ping_source(1, 0.05)
+            if probe["reachable"]:
+                recovered_after = time.perf_counter() - started
+                break
+            time.sleep(poll_interval)
+    finally:
+        restored = set_link_state(client, container_name, interface, up=True) if was_up else None
 
     after = ping_source(3, 0.1)
 
@@ -108,4 +120,81 @@ def measure_convergence(
         "post_recovery_loss_percent": after["loss_percent"],
         "poll_attempts": attempts,
         "timeout_seconds": timeout,
+        # A link that was already down before this call stays down on purpose;
+        # saying so is the difference between "we put it back" and "we found it
+        # broken and left it that way".
+        "link_restored": bool(was_up),
+        "link_was_down_before": not was_up,
+        # False convergence is a property of the topology, not of OSPF: on a cut
+        # link there is nothing to converge to. Without this the UI can only say
+        # "not detected" and the reader has to guess whether the router was slow
+        # or the topology had no other way across.
+        "alternate_path_exists": not no_alternate,
+        # Only meaningful when nothing recovered. A cut link can still "converge"
+        # instantly when the pair being measured never used it -- R2 -> R6 does
+        # not cross R4-R5 -- and calling that a convergence time would be
+        # measuring a link the traffic avoided.
+        "note": (
+            "This link is the only route between its two ends, so there is nothing "
+            "to fail over to. Convergence is undefined for it, not unmeasured."
+            if no_alternate and recovered_after is None
+            else None
+        ),
+        "destination_avoided_failed_link": (
+            bool(recovered_after is not None and no_alternate)
+        ),
     }
+
+
+def _has_alternate_path(
+    lab: dict[str, Any], container: str, interface: str
+) -> bool:
+    """Is there another route between the two routers this interface joins?
+
+    Answered from the discovered links, before anything is brought down: if
+    removing this link leaves the graph connected, OSPF has a second path to
+    converge onto. If it does not, the interface sits on a cut edge and no amount
+    of waiting will produce a convergence time.
+
+    Anything that cannot be identified returns True. Claiming "there is no way
+    round this" on a link we failed to identify would report a topology property
+    we have not actually established.
+    """
+    import ipaddress
+
+    from networkx import is_connected
+
+    from ospf_ai_service import lab_graph
+
+    device = next(
+        (d for d in lab.get("devices", []) if d.get("container") == container), None
+    )
+    if not device:
+        return True
+    address = (device.get("addresses") or {}).get(interface)
+    if not address:
+        return True
+
+    # The discovered link carries the real prefix. An address on its own does
+    # not: `ip_interface("192.168.4.2").network` is a /32, which would match
+    # nothing and silently report every link as having a way round it.
+    ends: list[str] | None = None
+    for link in lab.get("links", []):
+        try:
+            network = ipaddress.ip_network(link.get("subnet") or "", strict=False)
+        except ValueError:
+            continue
+        if ipaddress.ip_address(address) in network:
+            ends = sorted([link.get("source"), link.get("target")])
+            break
+    if not ends or len(ends) != 2 or not all(ends):
+        return True
+
+    graph = lab_graph(lab)
+    if not graph.has_edge(*ends):
+        return True
+    trimmed = graph.copy()
+    trimmed.remove_edge(*ends)
+    if trimmed.number_of_nodes() < 2:
+        return True
+    return is_connected(trimmed)

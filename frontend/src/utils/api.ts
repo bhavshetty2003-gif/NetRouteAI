@@ -928,6 +928,20 @@ export interface ConvergenceResult {
   link: { container: string; interface: string };
   post_recovery_latency_ms: number | null;
   post_recovery_loss_percent: number | null;
+  /** True when the interface was up beforehand and this call put it back. */
+  link_restored?: boolean;
+  /** True when the interface was already down, so it is still down. */
+  link_was_down_before?: boolean;
+  /** False when the failed link is a cut edge, so there is nothing to fail over
+   *  to and a missing convergence time is a property of the topology. */
+  alternate_path_exists?: boolean;
+  /** True when the pair being measured recovered without ever using the failed
+   *  link, so the time says nothing about failover. */
+  destination_avoided_failed_link?: boolean;
+  note?: string | null;
+  baseline_reachable?: boolean;
+  recovered_reachable?: boolean;
+  poll_attempts?: number;
   error?: string;
 }
 
