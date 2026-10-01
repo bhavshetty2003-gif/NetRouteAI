@@ -44,9 +44,38 @@ COMPOSE_PROJECT = "netrouteai"
 # container name never drift apart.
 _ROUTER_ID = re.compile(r"^r(\d+)$", re.IGNORECASE)
 
-# A /29 per link keeps each point-to-point segment small and makes a subnet a
-# reliable identity for a link. .1 is left to Docker as the bridge gateway.
-_PREFIX_BITS = 29
+# Address classes. The designer picks a class per link and the mask follows from
+# it, so "Class C" means /24 without anyone typing a prefix. Each class draws
+# from its own block so all three can be used in one topology without their
+# subnets ever overlapping -- a single Class A link otherwise swallows every
+# Class C link in 10/8.
+#
+# Docker accepts all three prefix lengths on a bridge (verified: /8, /16 and /24
+# all create cleanly, and fail only when they overlap an existing pool), so the
+# mask is genuinely the kernel's, not a label.
+#
+#   Class A -> /8   Class B -> /16   Class C -> /24
+CLASS_A = "A"
+CLASS_B = "B"
+CLASS_C = "C"
+
+CLASS_PREFIX = {CLASS_A: 8, CLASS_B: 16, CLASS_C: 24}
+
+# Class A: one /8 per first octet (10, 11, 12, ...). Class B: one /16 per second
+# octet (172.16, 172.18, 172.19, ...; 172.17 is Docker's own default pool).
+# Class C: one /24 per third octet. The three blocks are disjoint.
+_CLASS_A_FIRST_OCTET = 10
+_CLASS_B_SECOND_OCTET = [16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+_CLASS_C_THIRD_OCTET = list(range(0, 256))
+
+# How many candidate subnets to try before giving up.
+_MAX_SUBNET_ATTEMPTS = 256
+
+# The default when a link states no class: Class C, the only class that scales
+# to a topology with one segment per link.
+DEFAULT_CLASS = CLASS_C
+
+# .1 is left to Docker as the bridge gateway; endpoints start at .2.
 _FIRST_HOST = 2
 
 # Time given to the lab to settle: long enough for Docker to finish renaming
@@ -165,7 +194,7 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
 
     links: list[dict[str, Any]] = []
     used_addresses: dict[str, str] = {}
-    used_subnets: set[str] = set()
+    used_subnets: set[ipaddress.IPv4Network] = set()
 
     for index, raw in enumerate(links_in):
         source = str(raw.get("source") or "").upper()
@@ -180,9 +209,16 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
             raise DeployError(f"Link {source}–{target} connects a router to itself")
 
         cost = _clamp_int(raw.get("cost"), default=10, low=1, high=65535)
-        area = _normalise_area(raw.get("area", raw.get("source_area", 0)))
+        # A link with no area of its own is in its source router's area, so
+        # setting an area on a router in the designer gives every link it starts
+        # that area unless the link overrides it.
+        area = _normalise_area(
+            raw.get("area", raw.get("source_area", by_id[source]["area"]))
+        )
 
-        subnet, source_ip, target_ip = _addresses_for(raw, index, used_subnets)
+        subnet, source_ip, target_ip, address_class, mask = _addresses_for(
+            raw, used_subnets, used_addresses
+        )
         _claim(source_ip, source, used_addresses)
         _claim(target_ip, target, used_addresses)
 
@@ -192,6 +228,8 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
                 "source": source,
                 "target": target,
                 "subnet": subnet,
+                "mask": mask,
+                "address_class": address_class,
                 "source_ip": source_ip,
                 "target_ip": target_ip,
                 "cost": cost,
@@ -211,11 +249,43 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
             f"These routers are not connected to anything: {', '.join(orphans)}"
         )
 
+    # Give every router one headline address for the designer to show. All
+    # interface addresses are already unique; this additionally guarantees two
+    # routers never present the *same* address as their identity, which is what
+    # "each router has a distinct IP" has to mean if the UI is to pick a single
+    # address per router.
+    primaries: dict[str, str] = {}
+    for link in links:
+        for router, address in (
+            (link["source"], link["source_ip"]),
+            (link["target"], link["target_ip"]),
+        ):
+            best = primaries.get(router)
+            if best is None or _address_sort_key(address) < _address_sort_key(best):
+                primaries[router] = address
+    taken: dict[str, str] = {}
+    for router, address in sorted(primaries.items()):
+        if address in taken:
+            raise DeployError(
+                f"{router} and {taken[address]} would both be {address}; each "
+                f"router needs a distinct address"
+            )
+        taken[address] = router
+    for router in routers:
+        router["ip"] = primaries.get(router["id"])
+
     return {
         "routers": routers,
         "links": links,
         "areas": sorted({r["area"] for r in routers} | {l["area"] for l in links}),
     }
+
+
+def _address_sort_key(address: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(part) for part in str(address).split("."))
+    except ValueError:
+        return (999, 999, 999, 999)
 
 
 def _normalise_area(value: Any) -> int:
@@ -236,54 +306,158 @@ def _clamp_int(value: Any, default: int, low: int, high: int) -> int:
     return max(low, min(high, number))
 
 
-def _addresses_for(
-    raw: dict[str, Any], index: int, used_subnets: set[str]
-) -> tuple[str, str, str]:
-    """Resolve one link's subnet and its two endpoint addresses.
+def resolve_class(value: Any) -> str:
+    """Normalise an address class, accepting 'a'/'A'/'class a'/'8' and friends."""
+    if value is None or value == "":
+        return DEFAULT_CLASS
+    text = str(value).strip().upper()
+    if text in (CLASS_A, CLASS_B, CLASS_C):
+        return text
+    for letter, bits in CLASS_PREFIX.items():
+        if text in (f"CLASS {letter}", f"/{bits}", str(bits), f"CLASS{letter}"):
+            return letter
+    raise DeployError(
+        f"'{value}' is not an address class. Use A (/8), B (/16) or C (/24)."
+    )
 
-    A caller-supplied address wins. When only one side is supplied the other is
-    derived from the same subnet. When neither is, a free /29 is allocated.
+
+def mask_for_class(address_class: str) -> str:
+    """The dotted mask a class implies -- /8 -> 255.0.0.0 and so on."""
+    return str(ipaddress.ip_network(f"0.0.0.0/{CLASS_PREFIX[address_class]}").netmask)
+
+
+def _class_candidates(address_class: str) -> list[ipaddress.IPv4Network]:
+    """Every subnet this class can hand out, in allocation order."""
+    if address_class == CLASS_A:
+        return [ipaddress.ip_network(f"{octet}.0.0.0/8") for octet in range(10, 100)]
+    if address_class == CLASS_B:
+        return [
+            ipaddress.ip_network(f"172.{second}.0.0/16")
+            for second in _CLASS_B_SECOND_OCTET
+        ]
+    return [ipaddress.ip_network(f"192.168.{third}.0/24") for third in _CLASS_C_THIRD_OCTET]
+
+
+def _addresses_for(
+    raw: dict[str, Any], used_subnets: set[ipaddress.IPv4Network], taken_by: dict
+) -> tuple[str, str, str, str, str]:
+    """Resolve one link's subnet, its two addresses and its address class.
+
+    A caller-supplied address always wins, so an IP the designer already shows
+    is the IP the routers get. Only the blanks are filled in.
+
+    Allocation scans each class's candidates from the start and takes the first
+    subnet that is free, which is what makes a deleted link's subnet reusable:
+    nothing is held anywhere except in the topology being planned, so removing a
+    link releases its address for the next one automatically.
     """
     supplied_source = str(raw.get("source_ip") or "").strip()
     supplied_target = str(raw.get("target_ip") or "").strip()
     supplied_subnet = str(raw.get("subnet") or "").strip()
 
-    if supplied_source or supplied_target:
-        interface = _to_interface(supplied_source or supplied_target)
-        subnet = (
-            ipaddress.ip_network(supplied_subnet, strict=False)
-            if supplied_subnet
-            else interface.network
-        )
-        source_ip = _in_subnet(interface.ip, subnet, supplied_source, "source_ip")
-        target_ip = _in_subnet(
-            interface.ip if not supplied_target else _to_interface(supplied_target).ip,
-            subnet,
-            supplied_target,
-            "target_ip",
-        )
+    if supplied_source or supplied_target or supplied_subnet:
+        subnet = _subnet_from_supplied(supplied_subnet, supplied_source, supplied_target)
+        address_class = _class_of(subnet)
+        if supplied_source or supplied_target:
+            source_ip = _in_subnet(
+                _to_interface(supplied_source or supplied_target, address_class).ip,
+                subnet, supplied_source,
+            )
+            target_ip = _in_subnet(
+                _to_interface(supplied_target or supplied_source, address_class).ip,
+                subnet, supplied_target,
+            )
+        else:
+            # Subnet given, addresses left blank: take the first two hosts.
+            hosts = list(subnet.hosts())
+            source_ip, target_ip = str(hosts[_FIRST_HOST - 1]), str(hosts[_FIRST_HOST])
         if source_ip == target_ip:
             raise DeployError(
                 f"Link {raw.get('source')}–{raw.get('target')}: both ends were "
                 f"given the same address {source_ip}"
             )
         _reserve_subnet(subnet, used_subnets, raw)
-        return str(subnet), source_ip, target_ip
+        return str(subnet), source_ip, target_ip, address_class, mask_for_class(address_class)
 
-    for candidate in range(index + 1, 4096):
-        subnet = ipaddress.ip_network(f"10.{candidate}.0.0/{_PREFIX_BITS}")
+    address_class = resolve_class(raw.get("address_class") or raw.get("ip_class"))
+    for subnet in _class_candidates(address_class)[:_MAX_SUBNET_ATTEMPTS]:
         if subnet in used_subnets:
             continue
         used_subnets.add(subnet)
         hosts = list(subnet.hosts())
-        if len(hosts) < _FIRST_HOST + 2:
-            continue
         return (
             str(subnet),
             str(hosts[_FIRST_HOST - 1]),
             str(hosts[_FIRST_HOST]),
+            address_class,
+            mask_for_class(address_class),
         )
-    raise DeployError("Ran out of subnets for the links in this topology")
+    raise DeployError(
+        f"No free Class {address_class} subnet left for the links in this topology"
+    )
+
+
+def _subnet_from_supplied(
+    supplied_subnet: str, supplied_source: str, supplied_target: str
+) -> ipaddress.IPv4Network:
+    if supplied_subnet:
+        try:
+            return ipaddress.ip_network(supplied_subnet, strict=False)
+        except ValueError as exc:
+            raise DeployError(f"'{supplied_subnet}' is not a valid subnet") from exc
+    first = supplied_source or supplied_target
+    try:
+        address = ipaddress.ip_interface(first).ip
+    except ValueError as exc:
+        raise DeployError(f"'{first}' is not a valid IPv4 address") from exc
+    return ipaddress.ip_network(f"{address}/32")
+
+
+def _class_of(subnet: ipaddress.IPv4Network) -> str:
+    for letter, bits in CLASS_PREFIX.items():
+        if subnet.prefixlen == bits:
+            return letter
+    return ""
+
+
+def _to_interface(value: str, address_class: str = DEFAULT_CLASS) -> ipaddress.IPv4Interface:
+    text = value if "/" in value else f"{value}/{CLASS_PREFIX[address_class]}"
+    try:
+        return ipaddress.ip_interface(text)
+    except ValueError as exc:
+        raise DeployError(f"'{value}' is not a valid IPv4 address") from exc
+
+
+def _in_subnet(address, subnet, supplied: str) -> str:
+    if address in subnet and address not in (
+        subnet.network_address,
+        subnet.broadcast_address,
+    ):
+        return str(address)
+    if supplied:
+        raise DeployError(
+            f"{supplied} is not a usable host address on subnet {subnet}"
+        )
+    return str(list(subnet.hosts())[_FIRST_HOST - 1])
+
+
+def _reserve_subnet(
+    subnet: ipaddress.IPv4Network, used: set[ipaddress.IPv4Network], raw: dict[str, Any]
+) -> None:
+    if subnet in used:
+        raise DeployError(
+            f"Link {raw.get('source')}–{raw.get('target')} reuses subnet {subnet}, "
+            f"which is already taken by another link"
+        )
+    used.add(subnet)
+
+
+def _claim(address: str, owner: str, used: dict[str, str]) -> None:
+    if address in used:
+        raise DeployError(
+            f"{address} is assigned to both {used[address]} and {owner}"
+        )
+    used[address] = owner
 
 
 def _to_interface(value: str) -> ipaddress.IPv4Interface:
