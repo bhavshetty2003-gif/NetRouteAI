@@ -403,9 +403,19 @@ def _measure_path_hops(path: list[str], lab: dict) -> dict[str, Any]:
         if not ping["reachable"]:
             reachable = False
 
+    losses = [
+        s["packet_loss_percent"]
+        for s in segments
+        if s.get("packet_loss_percent") is not None
+    ]
+
     return {
         "segments": segments,
         "total_latency_ms": round(total, 4) if measured else None,
+        # The worst segment, not the mean: averaging loss would let a
+        # completely dead hop read as a small number. Taken from the pings
+        # above rather than from any per-edge constant.
+        "worst_segment_loss_percent": max(losses) if losses else None,
         "measured_segments": measured,
         "reachable": reachable and measured > 0,
     }
@@ -553,6 +563,14 @@ def compare_ospf_vs_ai(
             "traceroute_command": end_to_end["raw"].get("traceroute", {}).get("command"),
             "diagnosis": _diagnose(end_to_end),
         },
+        # Candidate paths are ranked before any of them is measured -- probing
+        # every candidate would mean a ping burst per path -- so these figures
+        # come from the graph, not from the network. The basis travels with them
+        # so the UI can say so instead of presenting estimates as readings.
+        "ai_ranking_basis": (
+            "Modelled from the live graph (link speed and cost only). Only the "
+            "selected path is measured; the rows below are candidate estimates."
+        ),
         "ai_ranking": [
             {
                 "path": s["path"],
@@ -561,6 +579,7 @@ def compare_ospf_vs_ai(
                 "bandwidth_mbps": s["bandwidth_mbps"],
                 "total_cost": s["total_cost"],
                 "hop_count": s["hop_count"],
+                "measured": False,
             }
             for s in ranked["ranking"]
         ],
@@ -656,7 +675,52 @@ def _ospf_nexthop(entries: list[dict[str, Any]], dest_ip: str) -> dict[str, Any]
     return best
 
 
-def ospf_rib_path(lab: dict[str, Any], source: str, destination: str) -> list[str]:
+def _directly_linked(lab: dict[str, Any], a: str, b: str) -> bool:
+    """True when two lab devices share a link."""
+    for link in lab["links"]:
+        if {link["source"], link["target"]} == {a, b}:
+            return True
+    return False
+
+
+def _device_for_address(lab: dict[str, Any], address: str) -> str | None:
+    """Which lab device holds `address`, by exact match then by subnet."""
+    exact = next(
+        (
+            d["id"]
+            for d in lab["devices"]
+            for addr in d["addresses"].values()
+            if addr == address
+        ),
+        None,
+    )
+    if exact:
+        return exact
+    for link in lab["links"]:
+        if address and link.get("subnet") and _in_subnet(address, link["subnet"]):
+            # Ambiguous only if the address is inside another link's subnet, and
+            # an exact match above already handled the common case.
+            for candidate in (link["source"], link["target"]):
+                device = next(
+                    (
+                        d
+                        for d in lab["devices"]
+                        if d["id"] == candidate
+                        and any(
+                            _in_subnet(addr, link["subnet"])
+                            for addr in d["addresses"].values()
+                        )
+                    ),
+                    None,
+                )
+                if device:
+                    return device["id"]
+    return None
+
+
+def ospf_rib_path(
+    lab: dict[str, Any], source: str, destination: str, graph=None
+) -> list[str]:
     """The path OSPF itself would forward, read from each router's OSPF RIB.
 
     Walking the RIB hop by hop is what makes this independent of any static
@@ -665,61 +729,109 @@ def ospf_rib_path(lab: dict[str, Any], source: str, destination: str) -> list[st
     differ precisely when the lab has been steered onto the AI path -- and
     reporting the steered path as "the OSPF path" would be circular.
     """
-    client = _client()
-    owners = _ip_owner_index(lab)
-    dest_ip = lab["ip_index"].get(destination)
-    src_dev = next((d for d in lab["devices"] if d["id"] == source), None)
-    if not src_dev or not dest_ip:
+    dest_dev = next((d for d in lab["devices"] if d["id"] == destination), None)
+    if not dest_dev or not any(d["id"] == source for d in lab["devices"]):
         return []
+    if source == destination:
+        return [source]
 
-    by_address = {addr: d["id"] for d in lab["devices"] for addr in d["addresses"].values()}
+    # Every address of the destination is a separate OSPF destination, and on a
+    # multi-homed router they do not all route the same way: R10 is reachable
+    # from R2 over its R9 link at cost 35 but over its R11 link at 40. Asking
+    # only for the device's primary address picked whichever link that happened
+    # to be and reported the longer path. Each address is walked and the cheapest
+    # wins, which is what "the OSPF path to R10" means to an operator.
+    candidates: list[list[str]] = []
+    for address in dest_dev["addresses"].values():
+        result = _rib_walk(lab, source, destination, address)
+        if result is not None:
+            candidates.append(result[1])
 
+    if not candidates:
+        return []
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # Candidates are scored by the interface costs the running routers report --
+    # the same arithmetic OSPF itself minimises. The `[110/metric]` figure in the
+    # RIB is deliberately not used to rank them: it is the distance from the
+    # *advertising* router and excludes that router's own egress cost, so two
+    # walks that diverge at different routers are not comparable and the cheaper
+    # path can lose.
+    graph = graph if graph is not None else lab_graph(lab)
+    return min(candidates, key=lambda candidate: _path_cost(graph, candidate))
+
+
+def _path_cost(G, path: list[str]) -> float:
+    """Total OSPF cost of a device path, counting only edges the graph models."""
+    total = 0.0
+    for a, b in zip(path, path[1:]):
+        if G.has_edge(a, b):
+            total += float(G[a][b].get("cost", 0))
+    return total
+
+
+def _rib_walk(
+    lab: dict[str, Any], source: str, destination: str, target_ip: str
+) -> tuple[float, list[str]] | None:
+    """Walk the OSPF RIB from `source` toward `target_ip`.
+
+    Returns (accumulated metric, device path) or None when the routers hold no
+    OSPF knowledge leading to the target.
+    """
     path = [source]
+    metric = 0.0
     current = source
+
     for _ in range(12):  # bounded so a routing loop cannot hang the request
+        if current == destination:
+            break
+
+        # OSPF always prefers a connected route, so once the current router
+        # holds a link straight to the destination the walk is finished.
+        #
+        # Without this check the walk kept consulting the RIB and could be sent
+        # back the way it came: asking R2's RIB for 10.5.0.2 -- R11's link to
+        # R12 -- makes R2 point at R1, a hop already visited, and the caller
+        # then saw "no valid path" on a topology with an obvious one.
+        if _directly_linked(lab, current, destination):
+            path.append(destination)
+            break
+
         dev = next((d for d in lab["devices"] if d["id"] == current), None)
         if not dev:
             break
         code, out = _exec(
-            dev["container"],
-            ["vtysh", "-c", "show ip route ospf"],
-            timeout=20,
+            dev["container"], ["vtysh", "-c", "show ip route ospf"], timeout=20
         )
         if code != 0:
             break
-        entry = _ospf_nexthop(_parse_ospf_rib(out), dest_ip)
+        entry = _ospf_nexthop(_parse_ospf_rib(out), target_ip)
         if entry is None:
-            # OSPF has no route from here; the destination is reachable only via
-            # another protocol or directly. Stop rather than invent a hop.
-            if current != destination:
-                break
-            break
-        if entry["connected"] and current != destination:
-            # The destination sits on a subnet this router holds directly, so it
-            # is the last transit hop.
-            next_device = owners.get(dest_ip)
-            if not next_device or next_device == current:
-                break
-            path.append(next_device)
+            # OSPF has no route from here; the target is reachable only via
+            # another protocol or directly connected. Stop rather than invent a hop.
             break
 
-        next_hop = entry["next_hop"]
-        if not next_hop or next_hop in path:
-            break
-        next_device = by_address.get(next_hop)
+        metric += float(entry["metric"])
+
+        next_device = (
+            _device_for_address(lab, entry["next_hop"]) if entry["next_hop"] else None
+        )
         if not next_device:
+            break
+        # Guard on devices, not on addresses: the previous check compared a
+        # next-hop address against a list of device ids, so it never fired.
+        if next_device in path:
             break
         path.append(next_device)
         current = next_device
-        if current == destination:
-            break
 
-    if path[0] != source:
-        return []
-    if path[-1] != destination:
-        # The walk ran out of OSPF knowledge before reaching the destination.
-        return [] if len(path) == 1 else path + [destination]
-    return path
+    if path[0] != source or path[-1] != destination:
+        # The walk ran out of OSPF knowledge. Report nothing rather than
+        # appending the destination, which manufactured a path no router would
+        # forward.
+        return None
+    return metric, path
 
 
 def _forwarding_method(
@@ -851,37 +963,86 @@ def _diagnose(end_to_end: dict[str, Any]) -> str | None:
     )
 
 
-def _model_metrics(G: nx.Graph, path: list[str]) -> dict[str, Any]:
-    """Model-derived metrics for a path, tolerant of links the graph lacks.
+def link_speed_mbps(client, lab: dict[str, Any], hop: dict[str, Any]) -> float | None:
+    """Real advertised speed of one lab interface, in Mbps.
 
-    A live traceroute path can cross a segment the transit-only graph does not
-    model, so metrics are accumulated only over the pairs that are present and
-    the coverage is reported alongside. Measured latency/loss always come from
-    `_measure_path_hops`; these figures are the topology-model view.
+    Read from `/sys/class/net/<iface>/speed` inside the container. Returns None
+    when the kernel does not know the speed -- a veth pair commonly reports it
+    and an unmeasurable link must be shown as unknown rather than as a
+    plausible default.
     """
-    bandwidth = float("inf")
-    latency = 0.0
-    loss = 0.0
+    container = hop.get("container")
+    interface = hop.get("interface")
+    if not container or not interface:
+        return None
+    try:
+        target = client.containers.get(container)
+    except Exception:  # noqa: BLE001 - docker raises many shapes
+        return None
+    try:
+        res = target.exec_run(["cat", f"/sys/class/net/{interface}/speed"])
+        raw = getattr(res, "output", None)
+        if isinstance(raw, (tuple, list)):
+            raw = raw[0] if raw else None
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        speed = int(str(raw).strip())
+    except Exception:  # noqa: BLE001
+        return None
+    # -1 means "unknown"; a veth pair has no real PHY to report from.
+    return None if speed <= 0 else round(float(speed), 2)
+
+
+def _model_metrics(
+    G: nx.Graph, path: list[str], measurements: dict[str, Any] | None = None,
+    lab: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Path metrics, taken from the live network rather than from constants.
+
+    This used to sum per-edge constants baked into the graph (1000 Mbps,
+    0.2 ms, no loss), so the comparison table showed a fabricated 1000 Mbps
+    bottleneck and a "0.6 ms" latency that was really just three times 0.2.
+    Latency and loss now come from the pings `_measure_path_hops` actually ran,
+    and bandwidth from the speed the kernel reports for the bottleneck
+    interface -- or `null` when it cannot be read, which is the honest answer.
+
+    `total_cost` is the one genuinely model-derived figure and stays: it is the
+    sum of the OSPF interface costs the running routers report. A live path can
+    cross a segment the transit-only graph does not model, so coverage is
+    reported alongside.
+    """
+    measurements = measurements or {}
     cost = 0.0
     modelled = 0
 
     for a, b in zip(path, path[1:]):
         if not G.has_edge(a, b):
             continue
-        edge = G[a][b]
-        bandwidth = min(bandwidth, edge.get("bandwidth", 100))
-        latency += edge.get("latency", 10)
-        loss += edge.get("loss_probability", 0.0)
-        cost += edge.get("cost", 1)
+        cost += G[a][b].get("cost", 1)
         modelled += 1
 
-    if bandwidth == float("inf"):
-        bandwidth = 0.0
+    hops = _path_ifaces(path, lab) if lab else []
+    bottleneck: float | None = None
+    if hops and lab:
+        client = _client()
+        for hop in hops:
+            if hop.get("kind") != "transit":
+                continue
+            speed = link_speed_mbps(client, lab, hop)
+            if speed is None:
+                continue
+            bottleneck = speed if bottleneck is None else min(bottleneck, speed)
 
     return {
-        "bandwidth": round(bandwidth, 2),
-        "latency": round(latency, 2),
-        "packet_loss": round(loss, 4),
+        "bandwidth": bottleneck,
+        "bandwidth_basis": (
+            "speed reported by the kernel for the bottleneck transit interface"
+            if bottleneck is not None
+            else "not measurable on this link (the kernel reports no speed)"
+        ),
+        "latency": measurements.get("total_latency_ms"),
+        "packet_loss": measurements.get("worst_segment_loss_percent"),
+        "latency_basis": "sum of the hop-to-hop ping RTTs actually measured",
         "total_cost": cost,
         "modelled_hops": modelled,
         "path_hops": len(path) - 1,
@@ -906,7 +1067,7 @@ def _route_report(
         "segments": measurements["segments"],
         "hops": hops or [],
         "links": _link_metrics(path, lab),
-        "computed": _model_metrics(G, path),
+        "computed": _model_metrics(G, path, measurements, lab),
     }
 
 
@@ -1013,15 +1174,26 @@ def _build_comparison(result: dict[str, Any]) -> dict[str, Any]:
                 "detail": "sum of OSPF interface costs on the path",
             },
             {
-                "parameter": "Min Bandwidth",
-                "ospf": fmt(ospf["computed"]["bandwidth"], "Mbps", 1),
-                "ai": fmt(ai["computed"]["bandwidth"], "Mbps", 1),
+                "parameter": "Min Link Speed",
+                "ospf": fmt(ospf["computed"]["bandwidth"], "Mbps", 0),
+                "ai": fmt(ai["computed"]["bandwidth"], "Mbps", 0),
                 "winner": _winner(
                     ospf["computed"]["bandwidth"],
                     ai["computed"]["bandwidth"],
                     lower_is_better=False,
                 ),
-                "detail": "bottleneck link on the path",
+                "detail": "bottleneck interface speed read from /sys/class/net",
+            },
+            {
+                "parameter": "Worst Packet Loss",
+                "ospf": fmt(ospf["computed"]["packet_loss"], "%", 2),
+                "ai": fmt(ai["computed"]["packet_loss"], "%", 2),
+                "winner": _winner(
+                    ospf["computed"]["packet_loss"],
+                    ai["computed"]["packet_loss"],
+                    lower_is_better=True,
+                ),
+                "detail": "worst hop-to-hop ping on the path",
             },
             {
                 "parameter": "Measured Segments",
