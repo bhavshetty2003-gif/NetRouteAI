@@ -458,12 +458,19 @@ def compare_ospf_vs_ai(
     include_convergence: bool = True,
     convergence_link: dict[str, str] | None = None,
     method: str = "ospf",
+    packet_count: int = 12,
 ) -> dict[str, Any]:
     """Measure OSPF and the Random Forest path over the live lab and compare them.
 
     `method` selects which path the page treats as the active route. Both are
     always measured so the selection changes what is compared rather than
     hiding the alternative.
+
+    `packet_count` is the number of real ICMP echo requests sent end to end. It
+    used to be pinned at 6, which cannot resolve a loss percentage below 17% --
+    one dropped packet out of six reads as "17% loss" and no figure below that
+    is possible at all. 12 makes a single drop read as 8%, and 1% needs 100, so
+    the UI reports the count it used and the loss it could actually resolve.
     """
     lab = discover_lab()
     if not lab["online"]:
@@ -520,10 +527,20 @@ def compare_ospf_vs_ai(
     ai_measurements = _measure_path_hops(ai, lab)
 
     # --- End-to-end measurement from the real source container ---
-    end_to_end = measure_path(source, destination, count=6)
+    end_to_end = measure_path(source, destination, count=packet_count)
+    # Loss is a ratio of whole packets, so with a handful of packets the
+    # smallest loss that can be shown is 1/count. Saying so is better than
+    # letting "0.0%" imply a precision the sample never had.
+    end_to_end["loss_resolution_percent"] = round(100.0 / packet_count, 2)
 
     traced = resolve_traced_hops(end_to_end.get("hops", []), lab)
-    walked = path_taken(traced, source)
+    walked_with_gaps = path_taken(traced, source)
+    # A hop nobody answered for leaves a hole in the chain, so the walked path
+    # cannot be compared against a computed one. Reporting a mismatch there would
+    # be inventing a fact, and claiming a match would be worse.
+    gaps = [part for part in walked_with_gaps if part.startswith("?hop")]
+    traced_complete = not gaps
+    walked = walked_with_gaps if traced_complete else []
 
     result: dict[str, Any] = {
         "available": True,
@@ -544,6 +561,8 @@ def compare_ospf_vs_ai(
             [],
         ),
         "path_taken": walked,
+        "path_taken_complete": traced_complete,
+        "path_taken_gaps": gaps,
         "path_taken_matches": _matches_method(walked, ospf, ai),
         "forwarding_method": _forwarding_method(walked, ospf, ai),
         "end_to_end": {
@@ -557,10 +576,13 @@ def compare_ospf_vs_ai(
             "target_ip": end_to_end["target_ip"],
             "packets_sent": end_to_end["packets_sent"],
             "packets_received": end_to_end["packets_received"],
+            "loss_resolution_percent": end_to_end["loss_resolution_percent"],
             "addresses_tried": end_to_end["addresses_tried"],
             "hops": traced,
             "command": end_to_end["raw"]["ping"]["command"],
             "traceroute_command": end_to_end["raw"].get("traceroute", {}).get("command"),
+            "traceroute_attempts": end_to_end["raw"].get("traceroute", {}).get("attempts"),
+            "traceroute_complete": end_to_end["raw"].get("traceroute", {}).get("complete"),
             "diagnosis": _diagnose(end_to_end),
         },
         # Candidate paths are ranked before any of them is measured -- probing
@@ -1122,11 +1144,22 @@ def path_taken(traced: list[dict[str, Any]], source: str) -> list[str]:
     Consecutive hops can belong to the same device -- a router answers for
     several TTLs, and OSPF raises the TTL mid-path -- so repeats are collapsed
     rather than reported as a loop.
+
+    An unidentified hop is a gap, not a router to step over. Skipping it used to
+    yield a chain with a router missing, which the UI then compared against the
+    OSPF path and reported as forwarding that did not match. `traced_complete`
+    in the response is what callers must check before treating this as a path;
+    here the gap is preserved so it is visible rather than invented over.
     """
     chain = [source]
     for hop in traced:
         device = hop.get("device")
-        if device and device != chain[-1]:
+        if not device:
+            # A hop nobody answered for. Record it explicitly so the chain does
+            # not look like a shorter, real path.
+            chain.append(f"?hop{hop.get('hop')}")
+            continue
+        if device != chain[-1]:
             chain.append(device)
     return chain
 

@@ -350,8 +350,14 @@ export interface LiveAnalytics {
   ai: RouteReport;
   /** Which method the routers are really forwarding right now, from the traceroute. */
   forwarding_method: RoutingMethod | null;
-  /** Device chain the packet really walked, recovered from traceroute hop IPs. */
+  /** Device chain the packet really walked, recovered from traceroute hop IPs.
+   *  Empty when the trace had a gap: a hop nobody answered for means the chain
+   *  is unknown, not short. */
   path_taken: string[];
+  /** False when a hop in the traceroute went unanswered, so `path_taken` cannot
+   *  be trusted and `path_taken_matches` is all false for that reason alone. */
+  path_taken_complete: boolean;
+  path_taken_gaps: string[];
   /** Which methods the walked path agrees with. */
   path_taken_matches: Record<RoutingMethod, boolean>;
   active: {
@@ -374,6 +380,10 @@ export interface LiveAnalytics {
     target_ip: string;
     packets_sent: number;
     packets_received: number;
+    /** Smallest loss percentage this packet count can actually express: 1/N.
+     *  With 12 packets one drop reads as 8.3%, so "0.0%" means "none of the 12
+     *  were lost", not "loss below 1%". */
+    loss_resolution_percent?: number;
     addresses_tried: Array<{ ip: string; reachable: boolean }>;
     /** Real traceroute hops with the answering address and owning device. */
     hops: Array<{
@@ -384,6 +394,9 @@ export interface LiveAnalytics {
     }>;
     command: string;
     traceroute_command: string | null;
+    /** How many traceroute runs it took to get a trace with no unanswered hop. */
+    traceroute_attempts?: number;
+    traceroute_complete?: boolean;
     diagnosis: string | null;
   };
   ai_ranking: Array<{
@@ -570,7 +583,8 @@ export async function getLiveAnalytics(
   source: string,
   destination: string,
   includeConvergence = false,
-  method: RoutingMethod = "ospf"
+  method: RoutingMethod = "ospf",
+  packetCount = 12
 ): Promise<LiveAnalytics> {
   const response = await fetch(`${API_BASE}/api/analytics/live`, {
     method: "POST",
@@ -580,6 +594,7 @@ export async function getLiveAnalytics(
       destination,
       include_convergence: includeConvergence,
       method,
+      packet_count: packetCount,
     }),
   });
   if (!response.ok) throw new Error(await describeFailure(response, "Live measurement"));

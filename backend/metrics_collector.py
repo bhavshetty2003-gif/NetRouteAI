@@ -356,18 +356,84 @@ def probe_ping(
 
 
 def probe_traceroute(
-    client, container_name: str, target_ip: str, max_hops: int = 12
+    client, container_name: str, target_ip: str, max_hops: int = 12, attempts: int = 3
 ) -> dict[str, Any]:
-    """Measure hop count and per-hop RTT to a target IP."""
+    """Measure hop count and per-hop RTT to a target IP.
+
+    A router does not always answer the TTL-expired probe: FRR rate-limits ICMP
+    replies, so a single run can come back with `*` in the middle of an otherwise
+    complete trace. That is a measurement artefact, not a routing fact, and left
+    unhandled it produced a path with a router missing from it -- the analytics
+    page then reported that forwarding did not match OSPF when it had in fact
+    matched. Each retry sends the probe with a longer gap (`-i`), and the most
+    complete run wins, with earlier answers kept for any hop that a later run
+    leaves blank.
+    """
     container = _container(client, container_name)
-    cmd = ["traceroute", "-n", "-m", str(max_hops), "-w", "1", target_ip]
-    code, out = _exec(container, cmd, timeout=max_hops + 10)
-    parsed = parse_traceroute(out)
-    parsed["command"] = " ".join(cmd)
-    parsed["source"] = container_name
-    parsed["target"] = target_ip
-    parsed["exit_code"] = code
-    return parsed
+    best: dict[str, Any] | None = None
+    commands: list[str] = []
+
+    for attempt in range(max(1, attempts)):
+        # Linux traceroute caps the interval at 1s, so spacing alone cannot fix
+        # rate limiting; what it does fix is sending the probes far enough apart
+        # that the router's limiter has reset before the next one.
+        cmd = ["traceroute", "-n", "-m", str(max_hops), "-w", "1"]
+        if attempt:
+            cmd += ["-i", "1", "-q", "1"]
+        cmd += [target_ip]
+        commands.append(" ".join(cmd))
+        code, out = _exec(container, cmd, timeout=max_hops + 10)
+        parsed = parse_traceroute(out)
+        parsed["exit_code"] = code
+        best = _merge_traceroute(best, parsed)
+        if best.get("complete"):
+            break
+
+    assert best is not None
+    best["command"] = commands[0]
+    best["commands"] = commands
+    best["attempts"] = len(commands)
+    best["source"] = container_name
+    best["target"] = target_ip
+    return best
+
+
+def _merge_traceroute(
+    previous: dict[str, Any] | None, current: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep the most complete traceroute seen, filling gaps from earlier runs.
+
+    A hop that answered in any run counts as answered: the router is on the
+    path, it just did not reply that time. `complete` then means every hop up to
+    the destination replied, which is what the caller needs before treating the
+    hop list as the real path.
+    """
+    if previous is None:
+        merged = dict(current)
+    else:
+        earlier = {h["hop"]: h for h in previous.get("hops", [])}
+        hops = []
+        for hop in current.get("hops", []):
+            if hop.get("address") is None and hop["hop"] in earlier:
+                recovered = earlier[hop["hop"]]
+                if recovered.get("address") is not None:
+                    hop = dict(hop)
+                    hop["address"] = recovered["address"]
+                    hop["rtt_ms"] = hop.get("rtt_ms") or recovered.get("rtt_ms")
+                    hop["recovered_from_earlier_run"] = True
+            hops.append(hop)
+        merged = dict(current)
+        merged["hops"] = hops
+
+    hops = merged.get("hops", [])
+    answered = [h for h in hops if h.get("address")]
+    merged["answered_hops"] = len(answered)
+    # Complete means the trace ran to the target with no gap: every hop before
+    # the last answered one answered too. A trace that stops short is not a
+    # complete picture of the path even if the hops it did get are all there.
+    merged["complete"] = bool(answered) and len(answered) == len(hops)
+    merged["hop_count"] = len(answered)
+    return merged
 
 
 def probe_interfaces(client, container_name: str) -> dict[str, Any]:

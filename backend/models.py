@@ -1,5 +1,5 @@
 from typing import Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Device(BaseModel):
@@ -132,6 +132,12 @@ class LiveAnalyticsRequest(BaseModel):
     include_convergence: bool = False
     max_pairs: int = 12
     method: str = "ospf"
+    # How many ICMP echo requests to send between the endpoints. The loss
+    # percentage is only meaningful above a handful: 6 packets cannot resolve
+    # 1%, and 6 is what the endpoint used to send unconditionally. Capped
+    # because each packet is a real `ping` inside a container and the call
+    # blocks on all of them.
+    packet_count: int = Field(default=12, ge=1, le=50)
 
 
 class RouteSteerRequest(BaseModel):

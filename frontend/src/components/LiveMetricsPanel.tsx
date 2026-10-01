@@ -68,6 +68,10 @@ function reading(
 
 const ms = (v: number | null | undefined) => (v === null || v === undefined ? '0' : v.toFixed(2));
 
+/** Real ICMP echo requests sent end to end per measurement. Twelve makes a
+ *  single dropped packet read as 8.3% rather than 17%. */
+const PACKET_COUNT = 12;
+
 export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
   devices,
   cables,
@@ -146,9 +150,10 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
     setBusy(true);
     setError(null);
     try {
-      // 12 packets: enough for the loss percentage to mean something, few
-      // enough to stay responsive.
-      const result = await getLiveAnalytics(source, destination, false, 'ospf');
+      // 12 real ICMP echo requests. Six cannot resolve a loss percentage below
+      // 17%, so a single dropped packet used to read as a sixth of the traffic
+      // lost and anything smaller was impossible to express.
+      const result = await getLiveAnalytics(source, destination, false, 'ospf', PACKET_COUNT);
       setData(result);
       setMeasured(true);
       // Throughput needs an adjacent peer, so only ask when the endpoints are
@@ -189,7 +194,12 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
     reading('Jitter', e2e?.jitter_ms ?? null, Activity, ' ms', 'muted'),
     reading('Packet Loss', e2e?.packet_loss_percent ?? null, XCircle, ' %',
       e2e?.packet_loss_percent ? 'bad' : 'ok',
-      `${e2e?.packets_received ?? 0} of ${e2e?.packets_sent ?? 0} replies`),
+      e2e?.packets_sent
+        ? `${e2e.packets_received} of ${e2e.packets_sent} replies` +
+          (e2e.loss_resolution_percent
+            ? ` — smallest loss this sample can show is ${e2e.loss_resolution_percent}%`
+            : '')
+        : undefined),
     reading('Hop Count', e2e?.hop_count ?? null, LinkIcon, ''),
     reading('Path Cost', ospf?.computed?.total_cost ?? null, BarChart3, ''),
     reading('Min Link Speed', ospf?.computed?.bandwidth ?? null, Wifi, ' Mbps', 'accent',

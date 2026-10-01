@@ -327,8 +327,11 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
     return { known: row[destination] !== undefined, reachable: row[destination] === true };
   })();
 
-  // The traced path is the ground truth for "where do packets actually go".
+  // The traced path is the ground truth for "where do packets actually go" --
+  // but only when every hop answered. With a gap the chain is unknown, so it is
+  // not rendered as a path at all rather than as a shorter, wrong one.
   const walked = live?.path_taken ?? [];
+  const tracedComplete = live ? live.path_taken_complete !== false : true;
   const tracedHops = e2e?.hops ?? [];
 
   const activeReport: RouteReport | undefined = live ? live[method] : undefined;
@@ -584,7 +587,14 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
                     {m.label}
                   </span>
                   {matches !== undefined &&
-                    (matches ? (
+                    // With an unanswered hop in the trace, neither a match nor a
+                    // mismatch can be claimed. Saying "not forwarding" there
+                    // would report a routing difference that was never observed.
+                    (live?.path_taken_complete === false ? (
+                      <span className="pill-faint" title="A hop in the traceroute went unanswered, so the path the packet walked is not fully known">
+                        unverified
+                      </span>
+                    ) : matches ? (
                       <span className="pill-ok">in effect</span>
                     ) : (
                       <span className="pill">not forwarding</span>
@@ -679,7 +689,11 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
 
             {walked.length === 0 ? (
               <p className="text-sm text-ink-faint font-mono">
-                No hop answered, so there is no forwarding path to show. {e2e?.diagnosis ?? ''}
+                {tracedComplete
+                  ? `No hop answered, so there is no forwarding path to show. ${e2e?.diagnosis ?? ''}`
+                  : `The packet reached ${destination}, but ${
+                      live?.path_taken_gaps?.join(' and ') ?? 'a hop'
+                    } never answered its traceroute probe, so the routers it passed through cannot be listed. ${e2e?.diagnosis ?? ''}`}
               </p>
             ) : (
               <>
@@ -727,19 +741,35 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
                 <span className="text-[10px] font-mono uppercase tracking-wider text-ink-muted">
                   matches
                 </span>
-                {METHODS.map((m) => (
-                  <span
-                    key={m.key}
-                    className={live.path_taken_matches?.[m.key] ? 'pill-ok' : 'pill-faint'}
-                  >
-                    {m.label}
+                {live.path_taken_complete === false ? (
+                  <span className="text-[10px] font-mono text-warn">
+                    unverified — a hop in the traceroute went unanswered
+                    {live.path_taken_gaps?.length
+                      ? ` (${live.path_taken_gaps.join(', ')})`
+                      : ''}
+                    , so the path the packet walked is not fully known
+                    {live.end_to_end?.traceroute_attempts
+                      ? ` after ${live.end_to_end.traceroute_attempts} traceroute attempts`
+                      : ''}
+                    . No match or mismatch is claimed.
                   </span>
-                ))}
-                {live.path_taken_matches?.ai && (
-                  <span className="text-[10px] font-mono text-ink-muted">
-                    AI and OSPF produced the same path here, so the routers
-                    cannot be forwarding one rather than the other.
-                  </span>
+                ) : (
+                  <>
+                    {METHODS.map((m) => (
+                      <span
+                        key={m.key}
+                        className={live.path_taken_matches?.[m.key] ? 'pill-ok' : 'pill-faint'}
+                      >
+                        {m.label}
+                      </span>
+                    ))}
+                    {live.path_taken_matches?.ai && (
+                      <span className="text-[10px] font-mono text-ink-muted">
+                        AI and OSPF produced the same path here, so the routers
+                        cannot be forwarding one rather than the other.
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             )}

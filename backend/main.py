@@ -376,6 +376,7 @@ def analytics_live(request: LiveAnalyticsRequest):
             request.destination,
             include_convergence=request.include_convergence,
             method=request.method,
+            packet_count=request.packet_count,
         )
     except LabUnavailable as exc:
         raise _lab_error(exc) from exc
