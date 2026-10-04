@@ -461,12 +461,20 @@ path" means the page compares the AI path against itself and always declares a
 match. The RIB is unaffected by injected static routes, so it is what OSPF itself
 would forward.
 
-A hand-rolled SPF is also genuinely wrong here. The modelled undirected Dijkstra
-picked `R1→R2→R11` while the routers forward `R1→R12→R11`, because **OSPF charges
-cost on each router's own outgoing interface** (`r1→r2` costs 5 while `r2→r1` costs
-20), which a symmetric undirected graph cannot express. It survives only as a
-labelled last resort, and the basis string says "modelled shortest path" so the
-word *Dijkstra* cannot reappear in the UI.
+A hand-rolled SPF is also unreliable in general. **OSPF charges cost on each
+router's own outgoing interface** — RFC 2328 §2.1.2 states that "a cost is
+associated with the output side of each router interface" and models the result as
+a *directed* graph — so an interface can cost 5 outbound and 20 on the return
+direction, which a symmetric undirected graph cannot express. A modelled SPF can
+therefore disagree with what the routers forward.
+
+In *this* lab that particular trap is not armed: `ip ospf cost {link cost}` is
+applied to both ends of a link, so costs here are symmetric and a modelled SPF would
+happen to agree. It is still not trusted, for two reasons that do apply — the OSPF
+RIB remains the authority on what OSPF would forward (it is unaffected by injected
+static routes), and a directed cost model is one config change away from mattering.
+The modelled path survives only as a labelled last resort, and the basis string says
+"modelled shortest path" so the word *Dijkstra* cannot reappear in the UI.
 
 ### `lab_graph` — the routable graph
 
