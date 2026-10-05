@@ -407,9 +407,32 @@ export const AnalyticsView: React.FC<{ devices: NetworkDevice[] }> = ({ devices 
               </p>
             </div>
           </div>
-          <pre className="bg-sunken border border-line rounded-lg p-4 text-xs font-mono text-ink-soft overflow-x-auto">
-            cd enterprise-ospf-lab && docker compose up -d
-          </pre>
+          <div className="bg-sunken border border-line rounded-lg p-4 space-y-2">
+            <p className="text-sm font-semibold text-ink">Bring the lab up</p>
+            <p className="text-xs text-ink-muted leading-snug">
+              This page measures the topology drawn on the designer canvas, so the
+              lab has to be built from that canvas. Open the designer and use the{' '}
+              <span className="font-semibold text-accent">Deploy</span> button on the
+              deploy bar. It generates a Docker/FRR lab for exactly the routers and
+              links you drew, pushes the configuration into the running routers, and
+              verifies it by reading it back.
+            </p>
+            <p className="text-xs text-ink-muted leading-snug">
+              An already-generated lab lives in{' '}
+              <span className="font-mono text-ink-soft">backend/labs/current/</span> and
+              can be restarted from a terminal with:
+            </p>
+            <pre className="bg-base border border-line rounded p-3 text-xs font-mono text-ink-soft overflow-x-auto">
+              cd backend/labs/current && docker compose -p netrouteai up -d
+            </pre>
+            <p className="text-xs text-warn leading-snug">
+              Do not restart that lab and expect the old configuration to still
+              apply. Docker renumbers each container&apos;s interfaces on every start,
+              so a config written against the previous names lands each area and cost
+              on the wrong link. Deploy from the canvas instead — it reads the
+              interfaces the routers actually have and addresses them by IP.
+            </p>
+          </div>
           {labError && (
             <p className="text-xs font-mono text-bad-soft border border-bad/50 rounded-lg p-3">
               {labError}

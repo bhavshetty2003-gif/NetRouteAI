@@ -79,8 +79,10 @@ DEFAULT_CLASS = CLASS_C
 _FIRST_HOST = 2
 
 # Time given to the lab to settle: long enough for Docker to finish renaming
-# interfaces across a restart, and long enough for OSPF adjacencies to form.
-_SETTLE_SECONDS = 6
+# interfaces across a restart, and long enough for OSPF to register an
+# interface on the routers. Twelve routers are configured and read back in one
+# pass, so this is multiplied by the retry count in `configure`.
+_SETTLE_SECONDS = 8
 _CONVERGE_SECONDS = 12
 
 DAEMONS = """zebra=yes
@@ -741,7 +743,7 @@ def _read_ospf_interfaces(client, container: str) -> dict[str, tuple[str, str]]:
 
 
 def configure(
-    plan: dict[str, Any], client, max_attempts: int = 3
+    plan: dict[str, Any], client, max_attempts: int = 5
 ) -> dict[str, dict[str, str]]:
     """Put the planned OSPF configuration into the running routers and prove it.
 
@@ -772,6 +774,13 @@ def configure(
     for attempt in range(1, max_attempts + 1):
         readings = _read_interfaces(client, plan, time.time() + 60)
         problems = []
+        # Write the bind-mounted frr.conf from the interface map actually
+        # observed, before pushing anything. FRR's `watchfrr` restarts a daemon
+        # during startup and the daemon then re-reads that file, discarding
+        # whatever vtysh was given a moment earlier -- which is how a router
+        # ended up running with `router ospf` and no interfaces at all. With the
+        # file already correct, a reload and a push converge on the same result.
+        _write_configs(plan, readings)
         for router in plan["routers"]:
             container = router["container"]
             observed = readings[router["id"]]
@@ -895,6 +904,40 @@ def teardown() -> dict[str, Any]:
         "removed": result.returncode == 0,
         "detail": (result.stderr or result.stdout or "").strip()[-400:],
     }
+
+
+def _wait_for_frr(client, containers: list[str], deadline: float) -> None:
+    """Wait until every router's vtysh actually answers OSPF commands.
+
+    `status == "running"` only means the container process started. FRR's
+    `docker-start` then goes on to load /etc/frr/frr.conf and start the
+    daemons, and configuration pushed inside that window is read and then
+    thrown away when the daemon finishes its own load. The symptom was a
+    deploy that pushed correct configuration, read `show ip ospf interface`
+    back empty, retried for `_SETTLE_SECONDS`, and then failed verification
+    while the running-config still looked perfect.
+    """
+    for container in containers:
+        while True:
+            try:
+                result = client.containers.get(container).exec_run(
+                    ["vtysh", "-c", "show ip ospf"]
+                )
+                output = getattr(result, "output", b"") or b""
+                if isinstance(output, (tuple, list)):
+                    output = output[0] if output else b""
+                text = output.decode() if isinstance(output, bytes) else str(output)
+                if "OSPF Routing Process" in text or "not enabled" in text:
+                    break
+            except (DockerException, NotFound):
+                pass
+            if time.time() >= deadline:
+                raise DeployError(
+                    f"{container} did not answer 'show ip ospf' in time; "
+                    "FRR never finished starting, so configuring it would be "
+                    "silently discarded."
+                )
+            time.sleep(1.0)
 
 
 def deployed_lab_running() -> bool:
@@ -1029,6 +1072,17 @@ def deploy(topology: dict[str, Any], wait_seconds: float = 90.0) -> dict[str, An
         time.sleep(1.0)
     else:
         raise DeployError("The generated containers did not all reach 'running'")
+
+    # The record is written before configuring, not after. `write_files` has
+    # already removed LAB_DIR, and `configure` can still fail verification, so
+    # saving only on success left a running lab with no plan on disk --
+    # `deployed_lab_running()` then reported False and GET /api/lab/deploy
+    # mislabelled the designer's own topology as the enterprise fallback.
+    save_plan(plan, {})
+
+    # FRR is still loading its own config at this point; pushing now would be
+    # discarded rather than applied.
+    _wait_for_frr(client, [r["container"] for r in plan["routers"]], deadline)
 
     assignments = configure(plan, client)
     save_plan(plan, assignments)
