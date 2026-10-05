@@ -21,6 +21,9 @@ Surface:
     POST /api/routing/dijkstra          model shortest path (+ measured metrics)
     POST /api/simulation/send-packets    packet-level simulation
     POST /api/analytics/compare         Dijkstra vs Random Forest on the model
+
+    /api/auth/*                         accounts: register, login, logout,
+                                       /me, forgot/reset password, Google
 """
 
 import logging
@@ -33,6 +36,8 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import auth_db
+from auth_routes import router as auth_router
 from ai_route_service import (
     get_current_topology,
     recommend_route,
@@ -101,6 +106,8 @@ from simulation_service import simulate_packets
 logger = logging.getLogger("netroute.dataset")
 
 init_db()
+auth_db.init_auth_db()
+auth_db.purge_expired()
 
 app = FastAPI(
     title="NetRoute AI API",
@@ -112,6 +119,10 @@ app = FastAPI(
 topologies_store: dict[str, dict] = {}
 
 STARTED_AT = time.time()
+
+# Accounts and sessions. Mounted before the network routes so a request to
+# /api/auth/* is matched here rather than falling through to a 404 handler.
+app.include_router(auth_router)
 
 
 def validate_topology(topology: dict) -> dict:

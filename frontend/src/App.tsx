@@ -64,11 +64,16 @@ import {
   DEFAULT_DRAWING_SETTINGS,
 } from './types/annotations';
 import { HomeView } from './components/views/HomeView';
+import { AuthScreen, AuthLoading } from './components/auth/AuthScreen';
+import { fetchCurrentUser, logoutUser, type AuthUser } from './utils/auth';
 import { AnalyticsView } from './components/views/AnalyticsView';
 import { MonitoringView } from './components/views/MonitoringView';
 import { SettingsModal } from './components/views/SettingsModal';
+import { clearTopology, loadTopology, saveTopology } from './utils/topologyStore';
 
-const LOCAL_STORAGE_KEY = 'netrouteai_topology_v1';
+/* A signed-in account's canvas lives under its own storage key, and a fresh
+ * sign-in starts from a blank workspace rather than a seeded R1/R2 pair. See
+ * utils/topologyStore.ts for why the key is per account. */
 
 /** Presets offered in the toolbar. `twelve` is the 12-router multi-area
  *  topology the measurement work was verified against. */
@@ -78,91 +83,68 @@ export default function App() {
   // Navigation - defaults to comprehensive Home landing page
   const [activeTab, setActiveTab] = useState<ActiveNavTab>('home');
 
-  // Topology State (Devices & Cables)
-  const [devices, setDevices] = useState<NetworkDevice[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed?.devices?.length) return parsed.devices;
-      }
-    } catch (e) {
-      console.error('Error loading saved topology:', e);
-    }
-    return getDefaultTopology().devices;
-  });
+  /* ------------------------------------------------------------------ *
+   * Session
+   *
+   * `authResolved` is separate from `user` on purpose. Until /api/auth/me has
+   * answered, `user === null` means "we do not know yet", not "signed out" --
+   * rendering the sign-in screen immediately would flash it at someone who
+   * already has a valid session on every page load.
+   * ------------------------------------------------------------------ */
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authResolved, setAuthResolved] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
 
-  const [cables, setCables] = useState<NetworkCable[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed?.cables?.length) return parsed.cables;
-      }
-    } catch (e) {
-      console.error('Error loading saved topology:', e);
-    }
-    return getDefaultTopology().cables;
-  });
+  useEffect(() => {
+    let cancelled = false;
+    fetchCurrentUser()
+      .then((found) => {
+        if (!cancelled) setUser(found);
+      })
+      .catch(() => {
+        // The server is unreachable. `user` stays null and the app falls
+        // through to the sign-in screen, which reports the connection problem
+        // itself when the user tries to submit.
+        if (!cancelled) setUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthResolved(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleAuthenticated = useCallback((next: AuthUser) => {
+    setUser(next);
+    setAuthOpen(false);
+  }, []);
+
+  const handleSignOut = useCallback(() => {
+    void logoutUser().finally(() => {
+      setUser(null);
+      setActiveTab('home');
+    });
+  }, []);
+
+  /* Topology starts empty and is filled in once the account is known.
+   *
+   * It cannot be read in a useState initialiser any more: the stored canvas is
+   * keyed by account id, and the account is not known until /api/auth/me has
+   * answered. Seeding `getDefaultTopology()` here was the other half of the
+   * problem -- a first-time visitor was handed someone else's R1/R2 pair. */
+  const [devices, setDevices] = useState<NetworkDevice[]>([]);
+  const [cables, setCables] = useState<NetworkCable[]>([]);
 
   // Selection
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>('R1');
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
 
-  // Annotations State (Cisco Packet Tracer style drawing palette objects)
-  const initialDefaultAnnotations: AnnotationItem[] = [
-    {
-      id: 'annot-lan-zone',
-      type: 'rounded-rect',
-      x: 180,
-      y: 80,
-      width: 640,
-      height: 380,
-      fillColor: '#0E7490',
-      borderColor: '#06B6D4',
-      borderWidth: 2,
-      opacity: 0.12,
-      isLocked: false,
-      layerOrder: 1,
-    },
-    {
-      id: 'annot-lan-label',
-      type: 'text',
-      x: 200,
-      y: 95,
-      width: 220,
-      height: 32,
-      text: 'Corporate Core LAN (VLAN 10)',
-      fillColor: 'transparent',
-      borderColor: 'transparent',
-      borderWidth: 1,
-      opacity: 1,
-      isLocked: false,
-      layerOrder: 2,
-      fontSize: 13,
-      fontFamily: 'sans',
-      fontWeight: 'bold',
-      textColor: '#38BDF8',
-      backgroundColor: '#0F172A',
-      textAlign: 'left',
-    },
-  ];
-
-  const [annotations, setAnnotations] = useState<AnnotationItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed?.annotations && Array.isArray(parsed.annotations)) {
-          return parsed.annotations;
-        }
-      }
-    } catch (e) {
-      console.error('Error loading saved annotations:', e);
-    }
-    return initialDefaultAnnotations;
-  });
+  /* Annotations start empty too. The old default drew a "Corporate Core LAN
+   * (VLAN 10)" zone and a label over whatever happened to be on the canvas,
+   * which on a blank workspace described a network that did not exist. */
+  const [annotations, setAnnotations] = useState<AnnotationItem[]>([]);
 
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<string[]>([]);
@@ -242,6 +224,57 @@ export default function App() {
   const animFrameRef = useRef<number | null>(null);
   const animTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  /* ------------------------------------------------------------------ *
+   * Loading and saving the canvas for the signed-in account
+   *
+   * Loading is keyed on the account id, so signing in as somebody else
+   * swaps the canvas rather than leaving the previous person's network on
+   * screen -- and signing out blanks it, so the next account to sign in on a
+   * shared browser starts from nothing.
+   *
+   * `hydratedFor` exists because the save effect below must not fire before
+   * the load has landed. Both run on the same commit, and the save effect
+   * closes over the *initial* empty state; without this guard it would
+   * overwrite the stored canvas with a blank one on every sign-in, and the
+   * "your last topology came back" behaviour would never work at all.
+   * ------------------------------------------------------------------ */
+  const userId = user?.id ?? null;
+  const [hydratedFor, setHydratedFor] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (userId === null) {
+      setDevices([]);
+      setCables([]);
+      setAnnotations([]);
+      setSelectedDeviceId(null);
+      setSelectedDeviceIds([]);
+      setSelectedCableId(null);
+      setSelectedAnnotationId(null);
+      setSelectedAnnotationIds([]);
+      setHydratedFor(null);
+      return;
+    }
+    const saved = loadTopology(userId);
+    setDevices(saved.devices);
+    setCables(saved.cables);
+    setAnnotations(saved.annotations);
+    setSelectedDeviceId(saved.devices[0]?.id ?? null);
+    setSelectedDeviceIds([]);
+    setSelectedCableId(null);
+    setSelectedAnnotationId(null);
+    setSelectedAnnotationIds([]);
+    setHydratedFor(userId);
+  }, [userId]);
+
+  /* Persist automatically. This is what makes "the topology I last drew" come
+   * back, and it deliberately records an *empty* canvas too: clearing the
+   * workspace and signing out must produce a blank canvas on the way back in,
+   * not a resurrection of what was deleted. */
+  useEffect(() => {
+    if (userId === null || hydratedFor !== userId) return;
+    saveTopology(userId, { devices, cables, annotations });
+  }, [userId, hydratedFor, devices, cables, annotations]);
+
   // Multi-packet tick loop — advances all active packets
   useEffect(() => {
     const tick = () => {
@@ -309,40 +342,29 @@ export default function App() {
     };
   }, []);
 
-  // Save topology to localStorage
+  /* The canvas is already written on every change (see the effect above), so
+   * these two buttons are explicit re-writes rather than the only save. They
+   * stay because "where is my work kept" should have a visible answer. */
   const handleSaveTopology = () => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ devices, cables, annotations }));
-      alert('Network topology & annotations saved successfully to localStorage!');
-    } catch (e) {
-      console.error('Failed to save topology:', e);
-    }
+    saveTopology(userId, { devices, cables, annotations });
+    alert('Network topology & annotations saved for this account.');
   };
 
-  // Load topology from localStorage
   const handleLoadTopology = () => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed.devices && parsed.cables) {
-          setDevices(parsed.devices);
-          setCables(parsed.cables);
-          if (parsed.annotations) {
-            setAnnotations(parsed.annotations);
-          }
-          setSelectedDeviceId(parsed.devices[0]?.id || null);
-          setSelectedDeviceIds([]);
-          setSelectedAnnotationId(null);
-          setSelectedAnnotationIds([]);
-          alert('Topology & annotations restored from localStorage!');
-          return;
-        }
-      }
-      alert('No saved topology found in localStorage. Loading default.');
-    } catch (e) {
-      console.error('Failed to load topology:', e);
+    const saved = loadTopology(userId);
+    if (!saved.devices.length) {
+      alert('No saved topology for this account.');
+      return;
     }
+    setDevices(saved.devices);
+    setCables(saved.cables);
+    setAnnotations(saved.annotations);
+    setSelectedDeviceId(saved.devices[0]?.id ?? null);
+    setSelectedDeviceIds([]);
+    setSelectedCableId(null);
+    setSelectedAnnotationId(null);
+    setSelectedAnnotationIds([]);
+    alert('Topology & annotations restored for this account.');
   };
 
   // Send Topology to AI Backend for Route Recommendation
@@ -1300,18 +1322,54 @@ export default function App() {
   // Selected device object
   const selectedDevice = devices.find((d) => d.id === selectedDeviceId) || null;
 
+  // Wait for /api/auth/me before deciding anything. Rendering the landing page
+  // during this window and then swapping it out would show a signed-out header
+  // to someone who is in fact signed in.
+  if (!authResolved) return <AuthLoading />;
+
   // Dedicated SaaS Landing Page View vs Main Workspace Layout
   if (activeTab === 'home') {
     return (
       <div id="netrouteai-root" className="min-h-screen bg-base text-ink font-sans">
         <HomeView
           onLaunchDesigner={() => setActiveTab('designer')}
-          deviceCount={devices.length}
-          cableCount={cables.length}
+          onOpenAuth={() => setAuthOpen(true)}
+          user={user}
+          onUserUpdated={setUser}
+          onSignOut={handleSignOut}
+
         />
+        {authOpen && !user && (
+          <AuthScreen onAuthenticated={handleAuthenticated} onClose={() => setAuthOpen(false)} />
+        )}
       </div>
     );
   }
+
+  // Every other tab is inside the workspace, which is not reachable without an
+  // account. `activeTab` is restored from nothing on reload, but a stale value
+  // could survive a future navigation change, so the check is explicit.
+  if (!user) {
+    return (
+      <div id="netrouteai-root" className="min-h-screen bg-base text-ink font-sans">
+        <HomeView
+          onLaunchDesigner={() => setActiveTab('designer')}
+          onOpenAuth={() => setAuthOpen(true)}
+          user={user}
+          onUserUpdated={setUser}
+          onSignOut={handleSignOut}
+
+        />
+        <AuthScreen onAuthenticated={handleAuthenticated} onClose={() => setAuthOpen(false)} />
+      </div>
+    );
+  }
+
+  /* The canvas is loaded once the account is known. Rendering the workspace
+   * before that lands would put an empty canvas on screen for a frame and then
+   * fill it in, which reads as "my topology was deleted" rather than as a
+   * load. One commit later it is correct, so wait for it. */
+  if (hydratedFor !== user.id) return <AuthLoading />;
 
   return (
     <div
@@ -1324,6 +1382,9 @@ export default function App() {
         cableCount={cables.length}
         activeTab={activeTab}
         onNavigate={(tab) => setActiveTab(tab)}
+        user={user}
+        onUserUpdated={setUser}
+        onSignOut={handleSignOut}
       />
 
       {/* 2. Main Dashboard Split Layout */}
@@ -1338,9 +1399,7 @@ export default function App() {
               setActiveTab(tab);
             }
           }}
-          onLogout={() => {
-            setActiveTab('home');
-          }}
+          onLogout={handleSignOut}
         />
 
         {/* Dynamic Center Area based on activeTab */}
@@ -1683,8 +1742,11 @@ export default function App() {
         isOpen={settingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
         onClearLocalStorage={() => {
-          localStorage.removeItem(LOCAL_STORAGE_KEY);
-          handleSelectPreset('default');
+          // Forget this account's saved canvas and blank the workspace. It
+          // used to load the default R1/R2 preset instead, which meant
+          // "clear my data" quietly handed you somebody else's starter network.
+          clearTopology(userId);
+          handleResetCanvas();
         }}
       />
     </div>

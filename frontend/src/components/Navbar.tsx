@@ -13,6 +13,8 @@ import {
   CheckCircle2,
   Compass,
 } from 'lucide-react';
+import { ProfileMenu } from './ProfileMenu';
+import type { AuthUser } from '../utils/auth';
 
 interface NavbarProps {
   deviceCount: number;
@@ -20,6 +22,10 @@ interface NavbarProps {
   activeTab?: ActiveNavTab;
   onNavigate?: (tab: ActiveNavTab) => void;
   onSearchQuery?: (query: string) => void;
+  /** The signed-in account. The pill is only rendered when this is set. */
+  user?: AuthUser | null;
+  onUserUpdated?: (user: AuthUser) => void;
+  onSignOut?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -27,6 +33,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   cableCount,
   activeTab = 'designer',
   onNavigate,
+  user,
+  onUserUpdated,
+  onSignOut,
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   // Read from the document rather than initialised to `true`: `index.html` has
@@ -58,9 +67,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span>NetRoute</span>
                 <span className="text-accent font-mono">AI</span>
               </h1>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-accent-soft text-accent border border-accent font-mono">
-                v2.4 Pro
-              </span>
             </div>
             <p className="text-[11px] text-ink-muted hidden sm:block">
               Network Topology Designer & Packet Simulator
@@ -151,19 +157,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
         </div>
 
-        {/* User Profile Pill */}
-        <div
-          id="navbar-profile"
-          className="flex items-center space-x-2 pl-2 pr-3 py-1 rounded-xl bg-panel border border-line text-xs"
-        >
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-accent-deep flex items-center justify-center text-accent-ink font-bold text-xs shadow">
-            CC
+        {/* The signed-in account. This used to be a hardcoded "NetEng User /
+            CCNA / CCNP Sim" pill, which asserted an identity that did not
+            exist and changed nothing when clicked. */}
+        {user && onUserUpdated && onSignOut && (
+          <div id="navbar-profile">
+            <ProfileMenu user={user} onUpdated={onUserUpdated} onSignOut={onSignOut} />
           </div>
-          <div className="hidden sm:block text-left font-mono leading-tight">
-            <div className="text-[11px] font-semibold text-ink">NetEng User</div>
-            <div className="text-[9px] text-accent">CCNA / CCNP Sim</div>
-          </div>
-        </div>
+        )}
       </div>
     </header>
   );

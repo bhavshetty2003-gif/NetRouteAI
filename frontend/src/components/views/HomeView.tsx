@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   Network,
   ArrowRight,
@@ -13,83 +13,49 @@ import {
   Radio,
   Server,
   Box,
-  Sparkles,
-  Loader2,
-  ServerOff,
-  TriangleAlert,
 } from 'lucide-react';
-import {
-  getLabStatus,
-  getDatasetStats,
-  getOspfAreas,
-  type DatasetStats,
-  type LabStatus,
-  type OspfAreaInventory,
-} from '../../utils/api';
-
+import { ProfileMenu } from '../ProfileMenu';
+import type { AuthUser } from '../../utils/auth';
 interface HomeViewProps {
   onLaunchDesigner: () => void;
+  /** Opens the real sign-in / register overlay. */
+  onOpenAuth: () => void;
+  /** The signed-in account, so the header can show it and offer sign-out. */
+  user: AuthUser | null;
+  /** Persists an edit made in the profile menu. */
+  onUserUpdated: (user: AuthUser) => void;
+  onSignOut: () => void;
   onOpenDocs?: () => void;
   onOpenAnalytics?: () => void;
-  onLaunchPreset?: (preset: 'default' | 'star' | 'mesh' | 'tree' | 'bus' | 'ring') => void;
-  deviceCount?: number;
-  cableCount?: number;
 }
 
-export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
-  const [loginModalOpen, setLoginModalOpen] = useState(false);
-  const [email, setEmail] = useState('engineer@netroute.ai');
-  const [password, setPassword] = useState('••••••••••••');
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
+export const HomeView: React.FC<HomeViewProps> = ({
+  onLaunchDesigner,
+  onOpenAuth,
+  user,
+  onUserUpdated,
+  onSignOut,
+}) => {
   const [activeTabPreview, setActiveTabPreview] = useState<'ai' | 'ospf'>('ai');
 
-  // Real state of the lab and of the trained model, read from the backend.
-  //
-  // This page used to show a convergence time of "< 0.4ms", a bridge list of
-  // "br-net0 ... br-net4", a latency of "18.8 ms" beside an AI figure of
-  // "12.4 ms (-34%)", and a jitter of "0.8 ms" -- none of which came from
-  // anywhere. A landing page is the first thing anyone sees and it was making
-  // specific performance claims about a lab that had not been asked anything.
-  // Everything below is either a fact read back from a running lab or an
-  // explicit statement that there is nothing to read yet.
-  const [lab, setLab] = useState<LabStatus | null>(null);
-  const [areas, setAreas] = useState<OspfAreaInventory | null>(null);
-  const [dataset, setDataset] = useState<DatasetStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [statusError, setStatusError] = useState<string | null>(null);
-
-  const loadStatus = useCallback(async () => {
-    setLoading(true);
-    setStatusError(null);
-    // Each read is independent: a lab that is down must not hide the model
-    // stats, and a missing area readout must not hide the device count.
-    const [labResult, areaResult, datasetResult] = await Promise.allSettled([
-      getLabStatus(),
-      getOspfAreas(),
-      getDatasetStats(),
-    ]);
-    setLab(labResult.status === 'fulfilled' ? labResult.value : null);
-    setAreas(areaResult.status === 'fulfilled' ? areaResult.value : null);
-    setDataset(datasetResult.status === 'fulfilled' ? datasetResult.value : null);
-    if (labResult.status === 'rejected') {
-      setStatusError(labResult.reason instanceof Error ? labResult.reason.message : String(labResult.reason));
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    void loadStatus();
-  }, [loadStatus]);
-
-  const handleLoginSubmit = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    setIsLoggingIn(true);
-    setTimeout(() => {
-      setIsLoggingIn(false);
-      setLoginModalOpen(false);
-      onLaunchDesigner();
-    }, 400);
-  };
+  /* This page deliberately reads nothing from the backend.
+   *
+   * It used to, and that made the landing page describe one person's lab rather
+   * than the product: whoever deployed last decided what a stranger saw on their
+   * first visit, including their router IDs, their area count and their ABRs.
+   * Two accounts, one machine, two different home pages.
+   *
+   * It also used to show a convergence time of "< 0.4ms", a bridge list of
+   * "br-net0 ... br-net4", a latency of "18.8 ms" beside an AI figure of
+   * "12.4 ms (-34%)", and a jitter of "0.8 ms" -- none of which came from
+   * anywhere. Replacing those with live reads fixed the fabrication but created
+   * this problem, and replacing them with fresh constants would only reintroduce
+   * the first one.
+   *
+   * So the page now carries no numbers at all. Every figure the product produces
+   * is measured in the lab on demand, and the Analytics page prints the command
+   * that produced each one next to it. Nothing here is a claim about a network;
+   * everything here is a description of what the software does. */
 
   return (
     <div
@@ -115,22 +81,23 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
             <span className="text-lg sm:text-xl font-extrabold tracking-tight text-ink font-sans">
               NetRoute<span className="text-accent font-mono">AI</span>
             </span>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-accent-soft text-accent border border-accent font-semibold">
-              v2.4 Enterprise
-            </span>
           </div>
         </div>
 
         {/* Action Controls */}
         <div className="flex items-center space-x-3">
-          <button
-            id="nav-login-btn"
-            onClick={() => setLoginModalOpen(true)}
-            className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink text-xs font-bold shadow-md shadow-lift hover:shadow-lift-strong transition-all cursor-pointer"
-          >
-            <LogIn className="w-4 h-4" />
-            <span>Login to NetRouteAI</span>
-          </button>
+          {user ? (
+            <ProfileMenu user={user} onUpdated={onUserUpdated} onSignOut={onSignOut} />
+          ) : (
+            <button
+              id="nav-login-btn"
+              onClick={onOpenAuth}
+              className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink text-xs font-bold shadow-md shadow-lift hover:shadow-lift-strong transition-all cursor-pointer"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>Login</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -150,28 +117,15 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
             </span>
           </h1>
 
-          <p className="mt-5 text-sm sm:text-base text-ink-soft max-w-3xl mx-auto leading-relaxed font-normal">
-            NetRouteAI combines traditional networking with Artificial Intelligence by allowing users to create enterprise network topologies, automate deployment using Docker and FRRouting, compare OSPF routing with AI-based routing algorithms, analyze network metrics, and recommend the optimal path based on performance.
-          </p>
-
           <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
             <button
               id="hero-login-entry-btn"
-              onClick={() => setLoginModalOpen(true)}
+              onClick={user ? onLaunchDesigner : onOpenAuth}
               className="group flex items-center space-x-2.5 px-8 py-3.5 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink font-bold text-sm shadow-xl shadow-lift hover:shadow-lift-strong transition-all duration-200 cursor-pointer active:scale-98"
             >
               <LogIn className="w-4 h-4 text-accent-ink" />
-              <span>Login to NetRouteAI</span>
+              <span>{user ? 'Open the Designer' : 'Login or Register'}</span>
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-            </button>
-
-            <button
-              id="hero-demo-entry-btn"
-              onClick={() => onLaunchDesigner()}
-              className="flex items-center space-x-2 px-6 py-3.5 rounded-xl bg-panel/90 hover:bg-raised border border-line/80 hover:border-accent/60 text-ink text-sm font-semibold transition-all cursor-pointer"
-            >
-              <Sparkles className="w-4 h-4 text-accent" />
-              <span>Instant Demo Access</span>
             </button>
           </div>
         </div>
@@ -179,9 +133,11 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
         {/* 3-Column Widescreen Showcase: Fills the left, center, and right sides */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 w-full items-stretch">
           
-          {/* LEFT SIDE COLUMN: Container Automation & Device Stack (3 cols on lg) */}
+          {/* LEFT SIDE COLUMN: what gets built, and from what (3 cols on lg) */}
           <div className="lg:col-span-3 flex flex-col space-y-4">
-            {/* Docker & FRRouting Status Card -- everything read from the lab */}
+            {/* Describes what the deploy step does. No counts: how many routers
+                exist depends on the topology the reader has drawn, which is
+                exactly the kind of figure that does not belong here. */}
             <div className="p-4 rounded-2xl bg-panel/80 border border-line/90 shadow-xl flex-1 flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between space-x-2 pb-2.5 border-b border-line text-xs font-mono text-accent font-semibold">
@@ -189,66 +145,24 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
                     <Box className="w-4 h-4 text-accent" />
                     <span>Docker &amp; FRRouting Stack</span>
                   </span>
-                  {loading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-ink-faint" />
-                  ) : (
-                    <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${
-                        lab?.online
-                          ? 'text-ok border-ok/40 bg-ok/10'
-                          : 'text-ink-muted border-line bg-panel'
-                      }`}
-                    >
-                      {lab?.online ? 'running' : 'not running'}
-                    </span>
-                  )}
                 </div>
 
-                {statusError && (
-                  <div className="mt-3 flex items-start gap-1.5 p-2 rounded-lg bg-bad/10 border border-bad/30">
-                    <TriangleAlert className="w-3.5 h-3.5 text-bad shrink-0 mt-0.5" />
-                    <span className="text-[10px] text-ink-muted font-mono break-words">{statusError}</span>
-                  </div>
-                )}
-
-                <div className="mt-3 space-y-2.5 text-xs">
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                    <span className="text-ink-muted font-mono">Devices up:</span>
-                    <span className="text-ok font-bold font-mono">
-                      {lab?.online ? `${lab.device_count}` : '—'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                    <span className="text-ink-muted font-mono">Links:</span>
-                    <span className="text-ink font-mono">
-                      {lab?.online
-                        ? `${lab.link_count} (${lab.transit_links} transit, ${lab.lan_links} LAN)`
-                        : '—'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                    <span className="text-ink-muted font-mono">OSPF areas:</span>
-                    <span className="text-ink font-mono">
-                      {areas?.areas?.length
-                        ? `${areas.areas.length} (${areas.areas.join(', ')})`
-                        : lab?.online
-                          ? '—'
-                          : 'no lab'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                    <span className="text-ink-muted font-mono">ABRs:</span>
-                    <span className="text-ink font-mono">
-                      {areas?.abrs?.length ? areas.abrs.join(', ') : '—'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-line/80 text-[11px] text-ink-muted font-mono">
-                Areas and ABRs are read from <span className="text-ink-faint">show ip ospf interface</span> on
-                the running routers. Convergence time is measured on demand, on the Analytics page, by
-                cutting a link and timing the failover.
+                <ol className="mt-3 space-y-2.5 text-xs">
+                  {[
+                    ['Draw it', 'Every router, switch and host you place on the canvas.'],
+                    ['Address it', 'Each link is allocated a real subnet by the same plan the lab will use.'],
+                    ['Run it', 'One FRRouting container per device, with its own configuration.'],
+                  ].map(([step, detail], index) => (
+                    <li key={step} className="flex items-start gap-2.5">
+                      <span className="shrink-0 w-4 h-4 rounded bg-accent-soft border border-accent/40 text-accent text-[10px] font-mono font-bold flex items-center justify-center">
+                        {index + 1}
+                      </span>
+                      <span className="text-ink-muted leading-relaxed">
+                        <span className="text-ink font-semibold">{step}.</span> {detail}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
               </div>
             </div>
 
@@ -284,7 +198,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
                   <span className="w-2.5 h-2.5 rounded-full bg-bad/70" />
                   <span className="w-2.5 h-2.5 rounded-full bg-warn/70" />
                   <span className="w-2.5 h-2.5 rounded-full bg-ok/70" />
-                  <span className="ml-2 text-ink font-semibold">Live Simulation Canvas</span>
+                  <span className="ml-2 text-ink font-semibold">How a Path Is Chosen</span>
                 </div>
                 
                 <div className="flex items-center bg-panel p-0.5 rounded-lg border border-line">
@@ -372,30 +286,25 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
                 </div>
               </div>
 
-              {/* An illustration of the two methods, deliberately carrying no numbers.
-                  The real figures are measured per pair and printed with the command
-                  that produced them on the Analytics page. */}
-              <p className="mt-1 text-[10px] font-mono text-ink-faint text-center">
-                Illustration only — the addresses and metrics on a real run come from the lab.
-              </p>
-
-              {/* What the toggle is actually choosing between -- no invented figures. */}
+              {/* What each method decides and what it decides with. The old
+                  cells here were "Method / Chosen by / Effect", where "Effect"
+                  read "static routes" -- correct, and jargon that made the
+                  panel look like an implementation note. These say what the
+                  decision is about instead. */}
               <div className="p-3 rounded-xl bg-panel/80 border border-line text-xs font-mono grid grid-cols-3 gap-2 text-center">
                 <div>
-                  <div className="text-[10px] text-ink-muted uppercase">Method</div>
+                  <div className="text-[10px] text-ink-muted uppercase">Input</div>
                   <div className="text-accent font-bold mt-0.5">
-                    {activeTabPreview === 'ai' ? 'Random Forest' : 'OSPF'}
+                    {activeTabPreview === 'ai' ? 'live link conditions' : 'link cost you set'}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-ink-muted uppercase">Chosen by</div>
-                  <div className="text-ink font-bold mt-0.5">
-                    {activeTabPreview === 'ai' ? 'measured features' : 'interface cost'}
-                  </div>
+                  <div className="text-[10px] text-ink-muted uppercase">Output</div>
+                  <div className="text-ink font-bold mt-0.5">one forwarding path</div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-ink-muted uppercase">Effect</div>
-                  <div className="text-info font-bold mt-0.5">static routes</div>
+                  <div className="text-[10px] text-ink-muted uppercase">Compared on</div>
+                  <div className="text-info font-bold mt-0.5">latency &amp; loss</div>
                 </div>
               </div>
             </div>
@@ -403,7 +312,11 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
 
           {/* RIGHT SIDE COLUMN: AI Predictive Engine & Cisco CLI Terminal (3 cols on lg) */}
           <div className="lg:col-span-3 flex flex-col space-y-4">
-            {/* The trained model, described by what it has actually been given */}
+            {/* What the model is and is not. The row counts lived here and were
+                removed: they are a property of whatever data this installation
+                has collected, so they told a first-time visitor about someone
+                else's work rather than about the product. The Analytics page
+                still prints them, where they are relevant to a result. */}
             <div className="p-4 rounded-2xl bg-panel/80 border border-line/90 shadow-xl flex-1 flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between space-x-2 pb-2.5 border-b border-line text-xs font-mono text-ok font-semibold">
@@ -411,115 +324,105 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
                     <Zap className="w-4 h-4 text-ok" />
                     <span>Random Forest Model</span>
                   </span>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${
-                      dataset?.ready_for_training
-                        ? 'text-ok border-ok/40 bg-ok/10'
-                        : 'text-warn border-warn/40 bg-warn/10'
-                    }`}
-                  >
-                    {dataset?.ready_for_training ? 'ready' : 'needs rows'}
-                  </span>
                 </div>
 
-                {dataset ? (
-                  <div className="mt-3 space-y-2.5 text-xs font-mono">
-                    <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                      <span className="text-ink-muted">Training rows:</span>
-                      <span className="text-ok font-bold">{dataset.total}</span>
+                <dl className="mt-3 space-y-2 text-xs">
+                  {[
+                    ['Predicts', 'Low / Medium / High congestion, from features read off the live link.'],
+                    ['Trained on', 'Rows collected by measuring pairs under four real network conditions.'],
+                    ['Ranks', 'Candidate paths by their measured latency, loss, jitter and throughput.'],
+                    ['Never does', 'Invent a figure. Anything it did not measure stays marked as such.'],
+                  ].map(([term, detail]) => (
+                    <div key={term} className="flex items-start gap-2">
+                      <dt className="text-ink font-semibold font-mono text-[11px] w-20 shrink-0 pt-px">
+                        {term}
+                      </dt>
+                      <dd className="text-ink-muted leading-relaxed min-w-0">{detail}</dd>
                     </div>
-                    <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                      <span className="text-ink-muted">Measured:</span>
-                      <span className="text-ink font-bold">
-                        {dataset.measured} ({(dataset.measured_ratio * 100).toFixed(0)}%)
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded-lg bg-panel/70 border border-line/80">
-                      <span className="text-ink-muted">Balanced seed:</span>
-                      <span className="text-ink font-bold">{dataset.synthetic}</span>
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-ink-muted text-[11px] mb-1">
-                        <span>Class balance</span>
-                        <span className="text-ink font-bold">{Object.keys(dataset.labels).length} classes</span>
-                      </div>
-                      <div className="space-y-1">
-                        {Object.entries(dataset.labels).map(([label, n]) => (
-                          <div key={label} className="flex items-center gap-2">
-                            <span className="text-[10px] text-ink-faint w-10 shrink-0">{label}</span>
-                            <div className="flex-1 h-1.5 bg-panel rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-gradient-to-r from-info to-ok rounded-full"
-                                style={{
-                                  width: `${
-                                    dataset.total
-                                      ? Math.max(2, (n / Math.max(...Object.values(dataset.labels))) * 100)
-                                      : 0
-                                  }%`,
-                                }}
-                              />
-                            </div>
-                            <span className="text-[10px] text-ink-muted w-8 text-right">{n}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-3 flex items-start gap-1.5 p-2 rounded-lg bg-warn/10 border border-warn/30">
-                    <ServerOff className="w-3.5 h-3.5 text-warn shrink-0 mt-0.5" />
-                    <span className="text-[10px] text-ink-muted font-mono">
-                      {loading ? 'Reading the model store…' : 'No dataset read yet.'}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-line/80 text-[11px] text-ink-muted font-mono">
-                Counts are from <span className="text-ink-faint">GET /api/dataset</span>. What the model
-                contributes to a figure — and what it does not — is spelled out per measurement on the
-                Analytics page.
+                  ))}
+                </dl>
               </div>
             </div>
 
-            {/* CLI card -- no invented transcript */}
+            {/* CLI card -- describes the capability, lists no device names. The old
+                version printed the router IDs of whichever lab happened to be
+                running, which was the clearest case of one person's topology
+                appearing on another person's home page. */}
             <div className="p-4 rounded-2xl bg-panel/80 border border-line/90 shadow-xl space-y-2">
               <div className="text-xs font-mono font-semibold text-ink-soft flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
                   <Terminal className="w-4 h-4 text-accent" />
                   <span>Router Terminal</span>
                 </div>
-                <span className="text-[10px] text-ink-muted font-mono">
-                  {lab?.online ? 'lab up' : 'no lab'}
-                </span>
               </div>
               <div className="p-2.5 rounded-lg bg-base text-ink-muted font-mono text-[10px] leading-relaxed border border-line">
-                {lab?.online ? (
-                  <>
-                    <p className="text-ink-faint">Open any router in the designer to run commands.</p>
-                    <p className="text-ink-faint">
-                      <span className="text-ok">ping</span> runs for real from that router&apos;s container
-                      and prints the command&apos;s own output.
-                    </p>
-                    <p className="text-ink-faint">
-                      Available now:{' '}
-                      {lab.devices
-                        .filter((d) => d.type === 'router')
-                        .slice(0, 8)
-                        .map((d) => d.id)
-                        .join(', ')}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-ink-faint">
-                    Nothing to run commands against. Build the topology you drew and the routers become
-                    real containers you can ping from.
-                  </p>
-                )}
+                <p className="text-ink-faint">
+                  Open any router in the designer and run commands against it. Configuration is applied
+                  through <span className="text-ok">vtysh</span> to the live router itself.
+                </p>
+                <p className="text-ink-faint mt-1.5">
+                  <span className="text-ok">ping</span> runs for real from that router&apos;s own container
+                  and prints the command&apos;s own output.
+                </p>
               </div>
             </div>
           </div>
         </div>
+
+        {/* What the site does, as a workflow. This is the part a visitor cannot
+            infer from a screenshot: each card below names an action, says what
+            it produces, and says which measurement backs it up. */}
+        <section className="mt-16" aria-labelledby="how-it-works-heading">
+          <div className="max-w-2xl">
+            <h2
+              id="how-it-works-heading"
+              className="text-2xl sm:text-3xl font-black text-ink tracking-tight"
+            >
+              What NetRouteAI does
+            </h2>
+            <p className="mt-3 text-sm text-ink-soft leading-relaxed">
+              Four steps, in order. Each one produces something you can inspect.
+            </p>
+          </div>
+
+          <ol className="mt-7 grid grid-cols-1 md:grid-cols-2 gap-4 w-full list-none p-0">
+            {[
+              {
+                icon: Compass,
+                title: '1. Draw the network',
+                body: 'Place routers, switches and hosts on a canvas and connect them. Every link takes a cost, a bandwidth and an OSPF area, and each one is allocated a real address subnet.',
+              },
+              {
+                icon: Box,
+                title: '2. Deploy it for real',
+                body: 'The drawn topology becomes one FRRouting container per device with its own FRR configuration, brought up on a real Docker network.',
+              },
+              {
+                icon: Terminal,
+                title: '3. Measure and disturb it',
+                body: 'Ping and traceroute run between real routers. You can inject latency, jitter and packet loss, take an interface down, and watch the traffic counters move.',
+              },
+              {
+                icon: Zap,
+                title: '4. Compare OSPF against AI',
+                body: 'The path OSPF actually forwards is read from the routers&apos; own routing tables, then compared with the one a Random Forest picks from measured link conditions.',
+              },
+            ].map(({ icon: Icon, title, body }) => (
+              <li
+                key={title}
+                className="p-5 rounded-2xl bg-panel/60 border border-line/90 hover:border-accent/50 transition-all space-y-2.5"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-accent-soft border border-accent/30 flex items-center justify-center text-accent shrink-0">
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-bold text-ink font-sans pt-1.5">{title}</h3>
+                </div>
+                <p className="text-xs text-ink-muted leading-relaxed">{body}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
 
         {/* 4-Card Expansive Full-Width Bento Grid */}
         <div className="mt-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
@@ -537,10 +440,10 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
             <div className="w-9 h-9 rounded-xl bg-info-soft border border-info/30 flex items-center justify-center text-info">
               <Box className="w-5 h-5" />
             </div>
-            <h3 className="text-sm font-bold text-ink font-sans">Docker &amp; FRRouting</h3>
+            <h3 className="text-sm font-bold text-ink font-sans">Multi-Area OSPF</h3>
             <p className="text-xs text-ink-muted leading-relaxed">
-              The topology you draw becomes real routers in isolated containers running FRR, configured
-              with the same addresses, costs and OSPF areas shown on the canvas.
+              Assign interfaces to areas and watch the area borders form. Backbone area 0 is protected, and
+              changing an area is treated as the routing change it is.
             </p>
           </div>
 
@@ -551,7 +454,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
             <h3 className="text-sm font-bold text-ink font-sans">OSPF vs AI Path Routing</h3>
             <p className="text-xs text-ink-muted leading-relaxed">
               Compare the path OSPF actually forwards against the one a Random Forest picks, on latency,
-              jitter, loss, hop count and throughput — each read from the routers themselves.
+              jitter, loss, hop count and throughput.
             </p>
           </div>
 
@@ -576,97 +479,6 @@ export const HomeView: React.FC<HomeViewProps> = ({ onLaunchDesigner }) => {
         </div>
       </footer>
 
-      {/* 3. The Login Modal / Page Entry Point */}
-      {loginModalOpen && (
-        <div className="fixed inset-0 bg-panel/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-          <div
-            id="login-dialog"
-            className="w-full max-w-md bg-panel border border-line rounded-2xl shadow-2xl p-6 space-y-5 relative"
-          >
-            {/* Close Button */}
-            <button
-              onClick={() => setLoginModalOpen(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-ink-muted hover:text-accent hover:bg-raised transition-colors cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            {/* Login Header */}
-            <div className="text-center space-y-2">
-              <div className="inline-flex p-3 rounded-2xl bg-accent-soft border border-accent/40 text-accent shadow-lg">
-                <Network className="w-6 h-6 text-accent" />
-              </div>
-              <h2 className="text-xl font-bold text-ink tracking-tight">Login to NetRouteAI</h2>
-              <p className="text-xs text-ink-muted">
-                Enter your credentials or click instant access to launch the Network Designer workspace.
-              </p>
-            </div>
-
-            {/* Form */}
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
-              <div className="space-y-1 text-left">
-                <label className="text-xs font-medium text-ink-soft flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-accent" />
-                  <span>Email Address</span>
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2 bg-panel border border-line/80 rounded-xl text-xs text-ink focus:outline-none focus:border-accent font-mono"
-                  placeholder="engineer@netroute.ai"
-                />
-              </div>
-
-              <div className="space-y-1 text-left">
-                <label className="text-xs font-medium text-ink-soft flex items-center gap-1.5">
-                  <Lock className="w-3.5 h-3.5 text-accent" />
-                  <span>Password</span>
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-2 bg-panel border border-line/80 rounded-xl text-xs text-ink focus:outline-none focus:border-accent font-mono"
-                  placeholder="••••••••••••"
-                />
-              </div>
-
-              {/* Login Button */}
-              <button
-                type="submit"
-                disabled={isLoggingIn}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-accent to-info hover:from-accent hover:to-info text-accent-ink font-bold text-xs shadow-lg shadow-lift transition-all cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50"
-              >
-                {isLoggingIn ? (
-                  <>
-                    <span className="w-3.5 h-3.5 border-2 border-line border-t-transparent rounded-full animate-spin" />
-                    <span>Signing In...</span>
-                  </>
-                ) : (
-                  <>
-                    <LogIn className="w-4 h-4" />
-                    <span>Sign In & Launch Designer</span>
-                  </>
-                )}
-              </button>
-            </form>
-
-            {/* Instant Demo Access Button */}
-            <div className="pt-2 border-t border-line text-center">
-              <button
-                type="button"
-                onClick={() => handleLoginSubmit()}
-                className="text-xs font-semibold text-accent hover:text-accent underline underline-offset-4 cursor-pointer"
-              >
-                Instant Access as Demo Network Engineer →
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
