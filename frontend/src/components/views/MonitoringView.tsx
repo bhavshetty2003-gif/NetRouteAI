@@ -134,10 +134,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ devices }) => {
             <span>Interface health</span>
           </h2>
           <p className="text-xs text-ink-muted mt-1 max-w-2xl">
-            Kernel counters on the running lab's interfaces, sampled at{' '}
-            {sampledAt ? new Date(sampledAt).toLocaleTimeString() : '—'}. Toggling an
-            interface runs <span className="font-mono">ip link set dev …</span> inside
-            the container, so it is a real link.
+            Sampled {sampledAt ? new Date(sampledAt).toLocaleTimeString() : '—'}
           </p>
         </div>
         <button
@@ -164,11 +161,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ devices }) => {
       {!online ? (
         <div className="flex items-start gap-2 p-4 rounded-lg bg-warn/10 border border-warn/30">
           <ServerOff className="w-5 h-5 text-warn shrink-0 mt-0.5" />
-          <p className="text-sm text-ink-muted">
-            No lab is running, so there are no interface counters to read. Build the
-            topology you drew from the designer to start one. Showing zeroes here would
-            be indistinguishable from a healthy idle network.
-          </p>
+          <p className="text-sm text-ink-muted">No lab is running.</p>
         </div>
       ) : (
         <>

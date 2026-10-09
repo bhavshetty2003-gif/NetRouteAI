@@ -86,9 +86,6 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
                   Hop-by-Hop Engine
                 </span>
               </h3>
-              <p className="text-xs text-ink-muted">
-                Simulate data frames traversing router and switch interfaces across graph topology
-              </p>
             </div>
           </div>
 
@@ -321,7 +318,7 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
         {/* Footer Actions */}
         <div className="px-5 py-3 bg-panel border-t border-line flex items-center justify-between">
           <div className="text-xs text-ink-muted">
-            Payload: Glowing 64-byte Ethernet Frame (White □□□□ with green glow)
+            Payload: 64-byte Ethernet frame
           </div>
           <div className="flex items-center space-x-2">
             <button

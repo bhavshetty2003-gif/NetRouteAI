@@ -45,11 +45,6 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
         { text: `--- NetRouteAI Cisco IOS CLI Simulator [${device.model}] ---`, type: 'output' },
         { text: `System uptime is ${device.uptime}`, type: 'output' },
         { text: ``, type: 'output' },
-        { text: `Configuration commands act on this device's record in the designer.`, type: 'output' },
-        { text: `'ping' is the exception: it runs a real ping from this router's container`, type: 'output' },
-        { text: `in the lab, and prints that command's own output. With no lab running`, type: 'output' },
-        { text: `there is nothing to ping and it will say so rather than answer.`, type: 'output' },
-        { text: ``, type: 'output' },
         { text: `Press 'help' or '?' for available Cisco commands. Type 'enable' to begin.`, type: 'output' },
         { text: ``, type: 'output' },
       ]);

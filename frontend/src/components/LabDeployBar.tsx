@@ -70,7 +70,7 @@ export const LabDeployBar: React.FC<LabDeployBarProps> = ({
             onClick={onPlan}
             disabled={isBusy || isPlanning || !canDeploy}
             className="flex items-center gap-1.5 rounded border border-line bg-panel px-2.5 py-1.5 text-[11px] font-semibold text-ink-muted hover:text-ink-soft hover:border-ink-faint disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Allocate an address for every link that has none, without starting anything"
+            title="Allocate an address for every unaddressed link"
           >
             {isPlanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Container className="w-3 h-3" />}
             Plan addresses
@@ -81,7 +81,7 @@ export const LabDeployBar: React.FC<LabDeployBarProps> = ({
             onClick={onDeploy}
             disabled={isBusy || !canDeploy}
             className="flex items-center gap-1.5 rounded border border-accent/50 bg-accent-soft px-2.5 py-1.5 text-[11px] font-semibold text-accent hover:border-accent disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Build this canvas as a real lab: one container per router, one subnet per link, then push the OSPF areas and costs and read them back"
+            title="Build this canvas as a real lab"
           >
             {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Rocket className="w-3 h-3" />}
             {isBusy ? 'Building…' : 'Build lab from this canvas'}
@@ -105,7 +105,7 @@ export const LabDeployBar: React.FC<LabDeployBarProps> = ({
             onClick={onDeployEnterprise}
             disabled={isBusy}
             className="flex items-center gap-1.5 rounded border border-line bg-panel px-2.5 py-1.5 text-[11px] font-semibold text-ink-faint hover:text-ink-muted hover:border-ink-faint disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Start the pre-built 12-router reference lab instead"
+            title="Start the pre-built 12-router reference lab"
           >
             <Building2 className="w-3 h-3" />
             Reference lab

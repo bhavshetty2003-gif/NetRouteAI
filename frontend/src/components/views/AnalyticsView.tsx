@@ -16,7 +16,6 @@ import {
   Radar,
   RefreshCw,
   Rocket,
-  ServerCog,
   ShieldCheck,
   Timer,
   TrendingUp,
@@ -530,16 +529,9 @@ export const AnalyticsView: React.FC<{
             </div>
             <div>
               <h2 className="text-lg font-bold text-ink">No topology to analyse</h2>
-              <p className="text-sm text-ink-soft">
-                This page reports on the routers in the topology on the designer
-                canvas. Add one or more routers there, then come back — until then
-                there is nothing to measure.
-              </p>
+              <p className="text-sm text-ink-soft">Add a router on the designer canvas.</p>
             </div>
           </div>
-          <p className="text-xs font-mono text-ink-muted">
-            No routers are present on the canvas, so the running lab is not shown.
-          </p>
         </div>
       </div>
     );
@@ -567,36 +559,9 @@ export const AnalyticsView: React.FC<{
             <div>
               <h2 className="text-lg font-bold text-ink">No lab is running</h2>
               <p className="text-sm text-ink-soft">
-                Analytics reports values measured from real routers, so it needs the
-                Docker/FRR lab to be up.
+                Deploy the canvas from the designer to start one.
               </p>
             </div>
-          </div>
-          <div className="bg-sunken border border-line rounded-lg p-4 space-y-2">
-            <p className="text-sm font-semibold text-ink">Bring the lab up</p>
-            <p className="text-xs text-ink-muted leading-snug">
-              This page measures the topology drawn on the designer canvas, so the
-              lab has to be built from that canvas. Open the designer and use the{' '}
-              <span className="font-semibold text-accent">Deploy</span> button on the
-              deploy bar. It generates a Docker/FRR lab for exactly the routers and
-              links you drew, pushes the configuration into the running routers, and
-              verifies it by reading it back.
-            </p>
-            <p className="text-xs text-ink-muted leading-snug">
-              An already-generated lab lives in{' '}
-              <span className="font-mono text-ink-soft">backend/labs/current/</span> and
-              can be restarted from a terminal with:
-            </p>
-            <pre className="bg-base border border-line rounded p-3 text-xs font-mono text-ink-soft overflow-x-auto">
-              cd backend/labs/current && docker compose -p netrouteai up -d
-            </pre>
-            <p className="text-xs text-warn leading-snug">
-              Do not restart that lab and expect the old configuration to still
-              apply. Docker renumbers each container&apos;s interfaces on every start,
-              so a config written against the previous names lands each area and cost
-              on the wrong link. Deploy from the canvas instead — it reads the
-              interfaces the routers actually have and addresses them by IP.
-            </p>
           </div>
           {labError && (
             <p className="text-xs font-mono text-bad-soft border border-bad/50 rounded-lg p-3">
@@ -627,12 +592,7 @@ export const AnalyticsView: React.FC<{
             </div>
             <div>
               <h2 className="text-lg font-bold text-ink">The running lab is not this topology</h2>
-              <p className="text-sm text-ink-soft">
-                This page reports only the network drawn on the designer canvas.
-                The containers that are up were built from something else, so
-                their measurements describe a different network and are not shown.
-                Deploy this canvas to measure it.
-              </p>
+              <p className="text-sm text-ink-soft">Deploy this canvas to measure it.</p>
             </div>
           </div>
           <p className="text-xs font-mono text-ink-soft leading-relaxed">{drift.detail}</p>
@@ -640,10 +600,7 @@ export const AnalyticsView: React.FC<{
             <p>On the canvas: {topologyRouters.map((d) => d.id).join(', ')}</p>
             <p>In the running lab: {labRouters.join(', ') || '—'}</p>
             {routerIds.length > 0 && (
-              <p>
-                Shared, but not shown: {routerIds.join(', ')} — the links between them
-                are not the links on the canvas.
-              </p>
+              <p>Shared, but not shown: {routerIds.join(', ')}</p>
             )}
           </div>
           {onOpenDesigner && (
@@ -670,11 +627,7 @@ export const AnalyticsView: React.FC<{
             </div>
             <div>
               <h2 className="text-lg font-bold text-ink">No overlapping routers</h2>
-              <p className="text-sm text-ink-soft">
-                None of the routers in the topology are present in the running lab,
-                so there is no measured pair to report. The lab may still be
-                starting; re-check, or deploy this topology again.
-              </p>
+              <p className="text-sm text-ink-soft">Deploy this topology again.</p>
             </div>
           </div>
           <div className="space-y-1 text-xs font-mono text-ink-muted">
@@ -709,8 +662,7 @@ export const AnalyticsView: React.FC<{
             </h2>
             <p className="text-sm text-ink-soft mt-0.5">
               {routerIds.length} of {topologyRouters.length} topology router
-              {topologyRouters.length === 1 ? '' : 's'} present in the live lab &middot;{' '}
-              every figure below is measured, not modelled
+              {topologyRouters.length === 1 ? '' : 's'} present in the live lab
             </p>
           </div>
         </div>
@@ -784,9 +736,6 @@ export const AnalyticsView: React.FC<{
             </div>
             <div>
               <h3 className="text-sm font-bold text-ink">Routing method</h3>
-              <p className="text-[11px] text-ink-muted font-mono">
-                Both are measured below; this selects which one the lab is asked to forward.
-              </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -870,9 +819,7 @@ export const AnalyticsView: React.FC<{
             }`}
           >
             {live.active.method === method && methodAlreadyInEffect ? '✓ ' : '! '}
-            {live.active.method === method
-              ? live.active.note
-              : `${live.active.label} is the method being measured. Selecting a different method re-measures.`}
+            {live.active.note}
           </p>
         )}
 
@@ -934,18 +881,15 @@ export const AnalyticsView: React.FC<{
                 <Radar className="w-4 h-4 text-accent" />
                 Path the packets actually take
               </h3>
-              <span className="text-[10px] font-mono text-ink-muted">
-                recovered from traceroute hop addresses
-              </span>
             </div>
 
             {walked.length === 0 ? (
               <p className="text-sm text-ink-faint font-mono">
                 {tracedComplete
-                  ? `No hop answered, so there is no forwarding path to show. ${e2e?.diagnosis ?? ''}`
+                  ? `No hop answered. ${e2e?.diagnosis ?? ''}`
                   : `The packet reached ${destination}, but ${
                       live?.path_taken_gaps?.join(' and ') ?? 'a hop'
-                    } never answered its traceroute probe, so the routers it passed through cannot be listed. ${e2e?.diagnosis ?? ''}`}
+                    } never answered its traceroute probe. ${e2e?.diagnosis ?? ''}`}
               </p>
             ) : (
               <>
@@ -995,15 +939,10 @@ export const AnalyticsView: React.FC<{
                 </span>
                 {live.path_taken_complete === false ? (
                   <span className="text-[10px] font-mono text-warn">
-                    unverified — a hop in the traceroute went unanswered
+                    unverified
                     {live.path_taken_gaps?.length
                       ? ` (${live.path_taken_gaps.join(', ')})`
                       : ''}
-                    , so the path the packet walked is not fully known
-                    {live.end_to_end?.traceroute_attempts
-                      ? ` after ${live.end_to_end.traceroute_attempts} traceroute attempts`
-                      : ''}
-                    . No match or mismatch is claimed.
                   </span>
                 ) : (
                   <>
@@ -1017,8 +956,7 @@ export const AnalyticsView: React.FC<{
                     ))}
                     {live.path_taken_matches?.ai && (
                       <span className="text-[10px] font-mono text-ink-muted">
-                        AI and OSPF produced the same path here, so the routers
-                        cannot be forwarding one rather than the other.
+                        AI and OSPF produced the same path.
                       </span>
                     )}
                   </>
@@ -1044,7 +982,6 @@ export const AnalyticsView: React.FC<{
                     ? `min ${ms(e2e?.rtt_min_ms)} · max ${ms(e2e?.rtt_max_ms)} ms · ${e2e?.packets_received}/${e2e?.packets_sent} replies`
                     : e2e?.diagnosis ?? 'no reply from the destination'
                 }
-                source={e2e?.command}
                 tone={measured ? 'ok' : 'bad'}
                 action={trend.length > 1 ? <Sparkline points={trend} /> : undefined}
               />
@@ -1052,8 +989,6 @@ export const AnalyticsView: React.FC<{
                 icon={<Zap className="w-4 h-4 text-ai" />}
                 label="Jitter"
                 value={measured ? `${ms(e2e?.jitter_ms)} ms` : '—'}
-                detail="Mean deviation between consecutive replies"
-                source={e2e?.command}
               />
               <MetricCard
                 icon={<ShieldCheck className="w-4 h-4 text-ok" />}
@@ -1064,19 +999,13 @@ export const AnalyticsView: React.FC<{
                     ? `${e2e?.packets_received}/${e2e?.packets_sent} replies received`
                     : 'no replies'
                 }
-                source={e2e?.command}
                 tone={(e2e?.packet_loss_percent ?? 0) > 0 ? 'bad' : 'ok'}
               />
               <MetricCard
                 icon={<Layers className="w-4 h-4 text-info" />}
                 label="Hop count"
                 value={measured ? `${e2e?.hop_count ?? '—'}` : '—'}
-                detail={
-                  e2e?.traceroute_command
-                    ? 'Hops answered along the live path'
-                    : 'Traceroute unavailable'
-                }
-                source={e2e?.traceroute_command}
+                detail={e2e?.traceroute_command ? undefined : 'Traceroute unavailable'}
               />
               <MetricCard
                 icon={<TrendingUp className="w-4 h-4 text-accent" />}
@@ -1091,17 +1020,9 @@ export const AnalyticsView: React.FC<{
                 detail={
                   throughput
                     ? throughput.reachable === false
-                      ? throughput.note ??
-                        'The counters did not move, so 0 Mbps is measured, not assumed.'
+                      ? throughput.note ?? '0 Mbps — no byte delta measured'
                       : `${(throughput.rx_bytes / 1e6).toFixed(2)} MB in / ${(throughput.tx_bytes / 1e6).toFixed(2)} MB out over ${throughput.sample_seconds}s on ${throughput.container}`
                     : 'Run a throughput probe to populate'
-                }
-                source={
-                  throughput
-                    ? throughput.reachable === false
-                      ? 'no reply, so no byte delta to report'
-                      : `byte-counter delta from /proc/net/dev on ${throughput.measured_interface ?? '—'}, ${throughput.source} -> ${throughput.destination}`
-                    : undefined
                 }
                 action={<button onClick={runThroughput} className="btn-ghost !px-2 !py-1 text-[10px]">probe</button>}
               />
@@ -1121,16 +1042,15 @@ export const AnalyticsView: React.FC<{
                   convergence
                     ? `Link ${convergence.link.container}/${convergence.link.interface} → ${
                         convergence.destination_avoided_failed_link
-                          ? `${source} → ${destination} never crossed it, so nothing failed over`
+                          ? `${source} → ${destination} never crossed it`
                           : convergence.alternate_path_exists === false
-                            ? 'the only route between its ends — nothing to fail over to'
+                            ? 'no alternate route'
                             : convergence.detected
                               ? 'recovered'
                               : 'no recovery within timeout'
                       }`
-                    : 'Breaks a live link and times recovery — opt in below'
+                    : 'not measured'
                 }
-                source={convergence ? 'timed link-down + reachability poll' : undefined}
                 tone={
                   convergence?.destination_avoided_failed_link ||
                   convergence?.alternate_path_exists === false
@@ -1351,38 +1271,6 @@ export const AnalyticsView: React.FC<{
             </div>
           </div>
 
-          {/* ------------------------------------------------------ provenance */}
-          <div className="card p-5 space-y-3">
-            <h3 className="text-base font-bold text-ink flex items-center gap-2">
-              <ServerCog className="w-4 h-4 text-info" />
-              How these numbers were produced
-            </h3>
-            <p className="text-xs text-ink-soft leading-relaxed">
-              Each figure above came from a command executed inside the lab containers.
-              Nothing on this page is a placeholder.
-            </p>
-            <div className="space-y-1.5 font-mono text-[11px] text-ink-muted">
-              <CommandLine label="end-to-end ping" command={e2e?.command} />
-              <CommandLine label="hop trace" command={e2e?.traceroute_command} />
-              {throughput && (
-                <CommandLine
-                  label="throughput"
-                  command={`ping ${(throughput.peers_pinged ?? []).join(' ') || '—'} from ${throughput.container}, then /proc/net/dev deltas over ${throughput.sample_seconds}s`}
-                />
-              )}
-              {convergence && (
-                <CommandLine
-                  label="convergence"
-                  command={`ip link set ${convergence.link.interface} down on ${convergence.link.container}, then poll reachability`}
-                />
-              )}
-              {convergence?.note && (
-                <p className="text-[10px] font-mono text-ink-muted leading-snug">
-                  {convergence.note}
-                </p>
-              )}
-            </div>
-          </div>
         </>
       )}
 
@@ -1565,9 +1453,7 @@ function OspfAreas({
             OSPF areas
           </h3>
           <p className="text-xs text-ink-soft mt-0.5">
-            Read from each router with{' '}
-            <span className="font-mono text-ink">show ip ospf interface</span>. Area{' '}
-            <span className="font-mono text-ink">{backbone}</span> is the backbone ·
+            Area <span className="font-mono text-ink">{backbone}</span> is the backbone ·
             areas in use {inventory.areas_dotted.join(', ')}
           </p>
         </div>
@@ -1691,10 +1577,8 @@ function OspfAreas({
 
         {selectedIface?.area === 0 && (
           <p className="text-[11px] text-warn leading-relaxed">
-            {iface} is on the backbone, so it cannot be moved into another area — that
-            would strand {device}, because non-backbone areas only learn about each
-            other through area 0. Add an interface in the target area to make{' '}
-            {device} an ABR instead.
+            {iface} is on the backbone and cannot be moved. Add an interface in the
+            target area to make {device} an ABR instead.
           </p>
         )}
 
@@ -1718,7 +1602,7 @@ function OspfAreas({
             {(preview.would_become_abr || preview.was_abr) && (
               <p className="text-[11px] text-info">
                 {preview.would_become_abr
-                  ? `${preview.device} becomes an ABR: it will hold interfaces in more than one area.`
+                  ? `${preview.device} becomes an ABR.`
                   : `${preview.device} stops being an ABR.`}
               </p>
             )}
@@ -1764,15 +1648,6 @@ function OspfAreas({
           </p>
         )}
       </div>
-
-      <p className="text-[11px] text-ink-muted leading-relaxed">
-        Changing an area is a routing change, not a label: OSPF only forms an adjacency
-        between interfaces in the same area, so moving one side of a link leaves the
-        far side unable to route over it until it follows. The change is applied through{' '}
-        <span className="font-mono text-ink">vtysh</span> and confirmed by reading the
-        OSPF process back — a refused command still exits 0, so exit status alone proves
-        nothing.
-      </p>
     </div>
   );
 }
@@ -1876,11 +1751,6 @@ function LabControls({
         <Plug className="w-4 h-4 text-warn" />
         Lab controls
       </h3>
-      <p className="text-xs text-ink-soft leading-relaxed">
-        Applies real <span className="font-mono text-ink">tc</span> impairment and real{' '}
-        <span className="font-mono text-ink">ip link</span> state changes inside the containers.
-        Change something, then measure again to see the effect.
-      </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* ------------------------------------------------ traffic source */}
@@ -1960,8 +1830,7 @@ function LabControls({
             </ul>
           ) : (
             <p className="text-[11px] text-ink-muted leading-relaxed">
-              No generator is running, so the interface counters hold their last
-              values. Start one to make them advance.
+              No generator is running.
             </p>
           )}
         </div>
@@ -2117,11 +1986,6 @@ function LabControls({
               Collect measured dataset
             </button>
           </div>
-          <p className="text-[11px] text-ink-muted leading-relaxed">
-            Collection measures every reachable router pair under five real conditions
-            (clean, mild, moderate, heavy, loaded) so the Random Forest sees genuine
-            latency, loss and queue backlog rather than a single flat operating point.
-          </p>
         </div>
       </div>
 
@@ -2196,15 +2060,13 @@ function MetricCard({
   label,
   value,
   detail,
-  source,
   tone,
   action,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
-  detail: string;
-  source?: string | null;
+  detail?: string;
   tone?: 'ok' | 'bad' | 'warn';
   action?: React.ReactNode;
 }) {
@@ -2225,11 +2087,8 @@ function MetricCard({
         {action}
       </div>
       <div className={`text-2xl font-extrabold font-mono tracking-tight ${toneClass}`}>{value}</div>
-      <div className="text-[11px] text-ink-muted font-mono leading-relaxed">{detail}</div>
-      {source && (
-        <div className="text-[10px] text-ink-faint font-mono truncate pt-1 border-t border-line/60" title={source}>
-          {source}
-        </div>
+      {detail && (
+        <div className="text-[11px] text-ink-muted font-mono leading-relaxed">{detail}</div>
       )}
     </div>
   );
@@ -2254,7 +2113,6 @@ function RouteCard({
 }) {
   const border = tone === 'warn' ? 'border-warn' : tone === 'info' ? 'border-info' : 'border-accent';
   const heading = tone === 'warn' ? 'text-warn' : tone === 'info' ? 'text-info' : 'text-accent';
-  const pill = tone === 'warn' ? 'pill-warn' : tone === 'info' ? 'pill-info' : 'pill-accent';
 
   return (
     <div
@@ -2267,7 +2125,6 @@ function RouteCard({
         <div className="flex items-center gap-1.5 flex-wrap justify-end">
           {forwarding && <span className="pill-ok">forwarding</span>}
           {selected && <span className="pill-accent">selected</span>}
-          <span className={pill}>{report.basis}</span>
         </div>
       </div>
 
@@ -2334,12 +2191,3 @@ function Figure({
   );
 }
 
-function CommandLine({ label, command }: { label: string; command?: string | null }) {
-  if (!command) return null;
-  return (
-    <div className="flex gap-2 items-start">
-      <span className="text-ink-faint shrink-0 w-28 text-right">{label}</span>
-      <span className="text-ink-soft break-all">{command}</span>
-    </div>
-  );
-}

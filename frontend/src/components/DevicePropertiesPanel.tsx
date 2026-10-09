@@ -289,9 +289,6 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
               <span className="text-xs text-bad">Stopped</span>
             </label>
           </div>
-          <p className="text-[10px] text-ink-faint">
-            Stopped devices are ignored by routing and packet forwarding
-          </p>
         </div>
 
         {/* Basic Configuration Form */}
@@ -383,10 +380,6 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
                 }}
                 className="w-full mt-1 px-3 py-1.5 rounded-lg bg-panel border border-line text-ink font-mono text-xs focus:border-accent focus:outline-none"
               />
-              <p className="text-[10px] text-ink-faint mt-1 leading-tight">
-                Used by every link this router starts, unless that link sets its own area.
-                Deploy to push it to the routers.
-              </p>
             </div>
 
             {/* Primary IP Address with strict validation */}

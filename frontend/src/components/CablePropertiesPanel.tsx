@@ -1,7 +1,7 @@
 import React from 'react';
 import { NetworkCable } from '../types/network';
 import { Cable, X, Activity, Network, Hash } from 'lucide-react';
-import { ADDRESS_CLASSES, MASK_FOR_CLASS, PREFIX_FOR_CLASS, type AddressClass } from '../utils/api';
+import { ADDRESS_CLASSES, PREFIX_FOR_CLASS, type AddressClass } from '../utils/api';
 
 interface CablePropertiesPanelProps {
   cable: NetworkCable | null;
@@ -80,13 +80,6 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
             </button>
           ))}
         </div>
-        <p className="text-xs text-ink-faint mt-1">
-          The mask is generated from the class, never typed:{' '}
-          <span className="font-mono">{MASK_FOR_CLASS[addressClass]}</span>. Each class draws
-          from its own range (A: 10.x, B: 172.16+, C: 192.168.x), so links of
-          different classes can never be handed the same subnet. Changing the
-          class reallocates the address from the new range.
-        </p>
       </div>
 
       {/* Allocated addresses, read-only: the lab is configured with these */}
@@ -103,10 +96,7 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
             <p><span className="text-ink-faint">{cable.toDeviceId}</span> {targetIp || '-'}</p>
           </div>
         ) : (
-          <p className="text-xs text-ink-faint">
-            No address yet. Click <span className="text-ink-soft">Plan addresses</span> to have the
-            backend allocate one, or deploy the lab to allocate and verify it on the routers.
-          </p>
+          <p className="text-xs text-ink-faint">No address yet.</p>
         )}
       </div>
 
@@ -145,10 +135,6 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
             </button>
           )}
         </div>
-        <p className="text-xs text-ink-faint mt-1">
-          Left blank, this link uses the area of the router it starts at. Area 0 is the
-          backbone; non-zero areas only reach each other through it.
-        </p>
       </div>
 
       {/* Link Cost */}
@@ -172,7 +158,6 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
           }
           className="w-full rounded bg-panel border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none"
         />
-        <p className="text-xs text-ink-faint mt-1">OSPF cost for shortest path (1=best, 100=worst)</p>
       </div>
 
       {/* Link Status */}

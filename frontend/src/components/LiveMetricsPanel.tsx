@@ -220,19 +220,10 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
         <h2 className="text-lg font-bold">Live Metrics</h2>
       </div>
 
-      <p className="text-xs text-ink-muted mb-3 leading-snug">
-        Every figure below is read from the running lab over the API. Nothing here is
-        simulated, and a value that could not be measured is shown as
-        <span className="font-mono"> --</span> with the reason.
-      </p>
-
       {labOnline === false ? (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-warn/10 border border-warn/30 mb-4">
           <ServerOff className="w-4 h-4 text-warn shrink-0 mt-0.5" />
-          <p className="text-xs text-ink-muted leading-snug">
-            No lab is running, so there is nothing to measure. Build the topology you drew
-            from the designer to start one.
-          </p>
+          <p className="text-xs text-ink-muted leading-snug">No lab is running.</p>
         </div>
       ) : null}
 
@@ -327,7 +318,6 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
           <p className="text-xs font-mono text-ink-soft break-words leading-relaxed">
             {ospf.path.join(' -> ')}
           </p>
-          <p className="text-[10px] text-ink-faint mt-1">{ospf.basis}</p>
           {e2e?.hops && e2e.hops.length > 0 && (
             <div className="mt-2 space-y-0.5">
               {e2e.hops.map((hop) => (
@@ -354,10 +344,6 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
         <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-2">
           Canvas animation
         </h3>
-        <p className="text-[10px] text-ink-faint mb-2 leading-snug">
-          Packets drawn moving across the canvas. These count the animation, not the
-          network — the numbers above are the ones measured on the routers.
-        </p>
         <div className="grid grid-cols-2 gap-2">
           <div className="flex items-center justify-between p-2 rounded-lg border border-line bg-panel">
             <span className="text-[11px] text-ink-muted flex items-center gap-1.5">
