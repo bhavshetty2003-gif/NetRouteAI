@@ -461,14 +461,38 @@ def _subnet_from_supplied(
         address = ipaddress.ip_interface(first).ip
     except ValueError as exc:
         raise DeployError(f"'{first}' is not a valid IPv4 address") from exc
-    return ipaddress.ip_network(f"{address}/32")
+    # A bare address implies its classful network (10.0.0.2 -> 10.0.0.0/8),
+    # the same derivation the designer does when a class is picked. Taking it
+    # as a /32 instead produced a subnet no class could describe, and the
+    # caller then died on a KeyError rather than planning anything.
+    return ipaddress.ip_network(f"{address}/{CLASS_PREFIX[_class_of_address(address)]}", strict=False)
+
+
+def _class_of_address(address: ipaddress.IPv4Address) -> str:
+    """Address class by first octet -- the classful rule itself."""
+    first = int(str(address).split(".")[0])
+    if 1 <= first <= 126:
+        return CLASS_A
+    if 128 <= first <= 191:
+        return CLASS_B
+    if 192 <= first <= 223:
+        return CLASS_C
+    return DEFAULT_CLASS
 
 
 def _class_of(subnet: ipaddress.IPv4Network) -> str:
+    """The class a subnet belongs to.
+
+    A classful prefix (/8, /16, /24) answers directly. Anything else -- the
+    /29 the allocator hands out inside a class block, or a bare /32 -- falls
+    back to the first octet of its network address. Returning "" here used to
+    reach `CLASS_PREFIX[address_class]` and raise a bare KeyError, so *every*
+    re-plan of an already-addressed canvas link 500'd instead of planning.
+    """
     for letter, bits in CLASS_PREFIX.items():
         if subnet.prefixlen == bits:
             return letter
-    return ""
+    return _class_of_address(subnet.network_address)
 
 
 def _to_interface(value: str, address_class: str = DEFAULT_CLASS) -> ipaddress.IPv4Interface:

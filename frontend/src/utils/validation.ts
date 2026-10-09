@@ -3,10 +3,73 @@
  * Validates IPv4 addresses, subnet masks, and default gateways with specific error messaging.
  */
 
+import { MASK_FOR_CLASS, PREFIX_FOR_CLASS, type AddressClass } from "./api";
+
 export interface ValidationResult {
   isValid: boolean;
   error?: string;
   cleanedValue?: string;
+}
+
+/**
+ * Class of an IPv4 address by its first octet -- the classful rule itself,
+ * with the same boundaries the backend allocator uses
+ * (`lab_deploy._class_of_address`): 1-126 is A, 128-191 is B, 192-223 is C,
+ * and everything else falls back to C. The two must agree or the canvas would
+ * derive one mask and the lab another.
+ */
+export function addressClassOf(ip: string): AddressClass {
+  const first = Number(ip.split(".")[0]);
+  if (first >= 1 && first <= 126) return "A";
+  if (first >= 128 && first <= 191) return "B";
+  if (first >= 192 && first <= 223) return "C";
+  return "C";
+}
+
+/**
+ * The mask that follows from an address, so there is nothing to type:
+ * 10.0.0.3 -> 255.0.0.0, 172.16.0.1 -> 255.255.0.0, 192.168.1.1 ->
+ * 255.255.255.0. Typing an IP shows this instead of whatever mask was
+ * already in the field.
+ */
+export function classfulMaskFor(ip: string): string {
+  return MASK_FOR_CLASS[addressClassOf(ip)];
+}
+
+/** True for a value that means "no address": empty, `unassigned`, `no ip`. */
+export function isUnassignedIp(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  return !trimmed || trimmed === "unassigned" || trimmed === "no ip";
+}
+
+/**
+ * Checks a typed IP/mask pair once each half has passed its own format
+ * check. The designer addresses classfully -- a link's class fixes its mask
+ * -- so 10.0.0.3 with 255.255.255.0 is wrong even though both halves are
+ * individually well-formed, and that combination used to save silently.
+ *
+ * A failed format check elsewhere is not this function's business: it reports
+ * valid so the format-specific error is the one the user sees.
+ */
+export function validateIpMaskPair(ip: string, mask: string): ValidationResult {
+  const cleanedIp = ip.trim();
+  const cleanedMask = mask.trim();
+  if (isUnassignedIp(cleanedIp)) return { isValid: true, cleanedValue: cleanedMask };
+  if (!validateIPv4(cleanedIp, "IP Address").isValid) {
+    return { isValid: true, cleanedValue: cleanedMask };
+  }
+  if (!validateSubnetMask(cleanedMask).isValid) {
+    return { isValid: true, cleanedValue: cleanedMask };
+  }
+  const addressClass = addressClassOf(cleanedIp);
+  const expected = MASK_FOR_CLASS[addressClass];
+  if (cleanedMask !== expected) {
+    return {
+      isValid: false,
+      error: `Incorrect Subnet Mask: ${cleanedIp} is a class ${addressClass} address, so its mask must be ${expected} (/${PREFIX_FOR_CLASS[addressClass]}), not ${cleanedMask}. Please rewrite.`,
+    };
+  }
+  return { isValid: true, cleanedValue: cleanedMask };
 }
 
 /**

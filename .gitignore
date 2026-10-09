@@ -18,12 +18,20 @@ backend/docker_topologies/
 backend/test_topologies/
 backend/test_docker_output/
 generated_topologies/
+backend/docker_training/
+
+# Trained model pickles (recreated by backend/train_model.py --skip-docker)
+*.pkl
 
 # The lab generated from the designer topology (rebuilt by POST /api/lab/deploy)
 backend/labs/
 
 # Logs
 *.log
+
+# Runtime state written by start.sh (pids, per-run logs)
+.run/
+backend/.venv-install-stamp
 
 # VS Code
 .vscode/

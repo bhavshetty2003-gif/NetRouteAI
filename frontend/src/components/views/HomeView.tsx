@@ -390,7 +390,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               {
                 icon: Compass,
                 title: '1. Draw the network',
-                body: 'Place routers, switches and hosts on a canvas and connect them. Every link takes a cost, a bandwidth and an OSPF area, and each one is allocated a real address subnet.',
+                body: 'Place routers, switches and hosts on a canvas and connect them. Every link takes a cost, an OSPF area and a classful address subnet, and routers can be grouped into areas.',
               },
               {
                 icon: Box,

@@ -4,13 +4,16 @@
  * The session token lives in localStorage rather than an httpOnly cookie
  * because the API (:8000) and this UI (:3000) are different origins, so a
  * cross-site cookie would need SameSite=None plus CSRF protection to work at
- * all. The cost of that choice is that the token is readable by any script on
+ * all. A deployed build serves both from one origin, where a cookie would have
+ * been fine — the token stays where it is either way, because the storage
+ * layout is not something to change lightly under a running session store.
+ * The cost of that choice is that the token is readable by any script on
  * the page, so nothing here ever injects it into the DOM and no HTML is ever
  * built from a user-supplied string. That is the whole threat model: an XSS bug
  * elsewhere would be able to steal the token.
  * ------------------------------------------------------------------ */
 
-const API_BASE = "http://127.0.0.1:8000";
+import { API_BASE } from "./config";
 
 const TOKEN_KEY = "netrouteai_session_token";
 
@@ -86,8 +89,14 @@ async function authFetch<T>(
   try {
     response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   } catch {
+    // The port hint is only true in the dev layout, where the browser does talk
+    // to :8000 directly. In a deployed build API_BASE is "" — same origin,
+    // through nginx — so there is no port 8000 for the visitor to check, and
+    // naming one sends them looking at their own machine's port 8000.
     throw new AuthError(
-      "Could not reach the NetRouteAI server. Is the backend running on port 8000?",
+      API_BASE
+        ? "Could not reach the NetRouteAI server. Is the backend running on port 8000?"
+        : "Could not reach the NetRouteAI server.",
     );
   }
 

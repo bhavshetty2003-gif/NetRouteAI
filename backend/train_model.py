@@ -164,11 +164,14 @@ def main():
     logger.info("Initializing database...")
     init_db()
     
-    # Load topologies
-    topologies = load_topologies(args.topologies_dir)
-    logger.info(f"Loaded {len(topologies)} topologies")
-    
     if not args.skip_docker:
+        # Only the Docker path needs the topology files: it drives a fresh
+        # collection with them. The --skip-docker path reads network_metrics
+        # instead, so loading them unconditionally made the documented "use
+        # existing DB data" mode fail on any checkout that had never generated
+        # a topology directory.
+        topologies = load_topologies(args.topologies_dir)
+        logger.info(f"Loaded {len(topologies)} topologies")
         # Create output directory
         os.makedirs(args.output_dir, exist_ok=True)
         

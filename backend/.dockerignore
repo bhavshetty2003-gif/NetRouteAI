@@ -1,0 +1,6 @@
+# The image needs requirements.txt and nothing else — application code is
+# bind-mounted at runtime (see the Dockerfile header). Excluding everything
+# else keeps the build context from carrying backend/venv (hundreds of MB) and
+# the sqlite databases to the daemon.
+*
+!requirements.txt

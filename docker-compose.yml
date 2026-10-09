@@ -1,0 +1,70 @@
+# The whole application: API, UI, and access to the Docker daemon that runs the
+# FRR lab. On any Linux machine with Docker and this checkout:
+#
+#     docker compose up -d --build
+#
+# then open http://localhost (or http://<host>:${WEB_PORT}).
+#
+# --------------------------------------------------------------------------- #
+# Why the backend mount is written the way it is
+# --------------------------------------------------------------------------- #
+#   - ${PWD}/backend is mounted at ${PWD}/backend — the same absolute path on
+#     both sides. Not cosmetic: the backend runs `docker compose up` against
+#     `backend/labs/current/docker-compose.yml`, whose bind mounts are relative
+#     ("./r1/frr.conf"). Compose resolves them where it runs (in the container)
+#     and the daemon then resolves the result on the host. Identical paths are
+#     the only way those two are the same file. See backend/Dockerfile.
+#     Run this file from the repository root so ${PWD} is right.
+#
+#   - The project is named `netrouteai-app`, not `netrouteai`. The generated lab
+#     is a separate Compose project created with `-p netrouteai`
+#     (backend/lab_deploy.py). Two projects sharing a name means `docker compose
+#     down` here would also stop r1..r12 — so they do not share one.
+#
+#   - The socket is mounted, which is effectively root on the host for anything
+#     holding it, and the network API routes have no session in front of them.
+#     Both are inherited from how the lab is driven, so the published ports
+#     default to loopback. Serve the LAN deliberately:
+#
+#         BIND_HOST=0.0.0.0 docker compose up -d
+#
+# The lab itself is not started by this file: it is built from the topology
+# drawn in the designer (POST /api/lab/deploy). `./start.sh --lab` restores a
+# lab that was already deployed.
+name: netrouteai-app
+
+services:
+  backend:
+    build: ./backend
+    image: netrouteai-backend
+    restart: unless-stopped
+    working_dir: ${PWD}/backend
+    environment:
+      # Empty means "use the built-in defaults"; see main.py.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+    volumes:
+      - ${PWD}/backend:${PWD}/backend
+      # The lab is created, inspected and configured through the daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${API_PORT:-8000}:8000"
+    healthcheck:
+      # urlopen raises on a refusal or a non-2xx answer, so a plain run of this
+      # command is the whole check. python is in the image; curl is not.
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"
+      interval: 10s
+      timeout: 6s
+      retries: 15
+      start_period: 20s
+
+  frontend:
+    build: ./frontend
+    image: netrouteai-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-80}:80"

@@ -1,6 +1,6 @@
 import React from 'react';
 import { NetworkCable } from '../types/network';
-import { Cable, X, Activity, Wifi, Clock, AlertTriangle, Network, Hash } from 'lucide-react';
+import { Cable, X, Activity, Network, Hash } from 'lucide-react';
 import { ADDRESS_CLASSES, MASK_FOR_CLASS, PREFIX_FOR_CLASS, type AddressClass } from '../utils/api';
 
 interface CablePropertiesPanelProps {
@@ -173,101 +173,6 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
           className="w-full rounded bg-panel border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none"
         />
         <p className="text-xs text-ink-faint mt-1">OSPF cost for shortest path (1=best, 100=worst)</p>
-      </div>
-
-      {/* Bandwidth */}
-      <div className="mb-4">
-        <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">
-          <div className="flex items-center gap-1.5">
-            <Wifi className="w-3.5 h-3.5" />
-            Bandwidth (Mbps)
-          </div>
-        </label>
-        <input
-          type="number"
-          min={1}
-          max={10000}
-          value={cable.bandwidth || 100}
-          onChange={(e) =>
-            onUpdateCable({
-              ...cable,
-              bandwidth: Math.max(1, Number(e.target.value)),
-            })
-          }
-          className="w-full rounded bg-panel border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none"
-        />
-      </div>
-
-      {/* Latency */}
-      <div className="mb-4">
-        <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5" />
-            Latency (ms)
-          </div>
-        </label>
-        <input
-          type="number"
-          min={0}
-          max={1000}
-          value={cable.latency || 10}
-          onChange={(e) =>
-            onUpdateCable({
-              ...cable,
-              latency: Math.max(0, Number(e.target.value)),
-            })
-          }
-          className="w-full rounded bg-panel border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none"
-        />
-      </div>
-
-      {/* Delay */}
-      <div className="mb-4">
-        <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5" />
-            Delay (ms)
-          </div>
-        </label>
-        <input
-          type="number"
-          min={0}
-          max={1000}
-          value={cable.delay ?? 10}
-          onChange={(e) =>
-            onUpdateCable({
-              ...cable,
-              delay: Math.max(0, Number(e.target.value)),
-            })
-          }
-          className="w-full rounded bg-panel border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none"
-        />
-        <p className="text-xs text-ink-faint mt-1">Animation duration = delay × 10ms</p>
-      </div>
-
-      {/* Packet Loss */}
-      <div className="mb-4">
-        <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">
-          <div className="flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            Packet Loss (%)
-          </div>
-        </label>
-        <input
-          type="number"
-          min={0}
-          max={100}
-          step={1}
-          value={cable.packetLoss ?? 0}
-          onChange={(e) =>
-            onUpdateCable({
-              ...cable,
-              packetLoss: Math.max(0, Math.min(100, Number(e.target.value))),
-            })
-          }
-          className="w-full rounded bg-panel border border-line px-3 py-2 text-sm focus:border-accent focus:outline-none"
-        />
-        <p className="text-xs text-ink-faint mt-1">Chance a packet is dropped on this link</p>
       </div>
 
       {/* Link Status */}

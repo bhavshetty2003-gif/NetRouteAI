@@ -19,6 +19,9 @@ import {
   validateIPv4,
   validateSubnetMask,
   validateDefaultGateway,
+  validateIpMaskPair,
+  classfulMaskFor,
+  isUnassignedIp,
 } from '../utils/validation';
 
 interface DevicePropertiesPanelProps {
@@ -62,7 +65,14 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
     if (device) {
       setName(device.name);
       setIpAddress(device.ipAddress);
-      setSubnetMask(device.subnetMask);
+      // The mask follows from the address, not from what was stored beside it:
+      // a stale 255.255.255.0 next to 10.0.0.3 shows and saves as 255.0.0.0,
+      // the same value the lab would be configured with.
+      setSubnetMask(
+        device.ipAddress && !isUnassignedIp(device.ipAddress)
+          ? classfulMaskFor(device.ipAddress)
+          : device.subnetMask
+      );
       setGateway(device.gateway);
       setIpError(null);
       setSubnetError(null);
@@ -90,12 +100,24 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
     const ipRes = validateIPv4(ipAddress, 'Primary IP Address');
     const maskRes = validateSubnetMask(subnetMask);
     const gwRes = validateDefaultGateway(gateway);
+    // Both halves can be well-formed and still disagree: 10.0.0.3 wants
+    // 255.0.0.0, so 255.255.255.0 is rejected here rather than saved.
+    const pairRes =
+      ipRes.isValid && maskRes.isValid
+        ? validateIpMaskPair(ipAddress, subnetMask)
+        : { isValid: true };
 
     setIpError(ipRes.isValid ? null : ipRes.error || 'Incorrect IP Address. Please rewrite.');
-    setSubnetError(maskRes.isValid ? null : maskRes.error || 'Incorrect Subnet Mask. Please rewrite.');
+    setSubnetError(
+      maskRes.isValid
+        ? pairRes.isValid
+          ? null
+          : pairRes.error || 'Incorrect Subnet Mask for this address. Please rewrite.'
+        : maskRes.error || 'Incorrect Subnet Mask. Please rewrite.'
+    );
     setGatewayError(gwRes.isValid ? null : gwRes.error || 'Incorrect Default Gateway. Please rewrite.');
 
-    return ipRes.isValid && maskRes.isValid && gwRes.isValid;
+    return ipRes.isValid && maskRes.isValid && gwRes.isValid && pairRes.isValid;
   };
 
   const handleApplyChanges = () => {
@@ -126,12 +148,24 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
     setIpAddress(val);
     const res = validateIPv4(val, 'Primary IP Address');
     setIpError(res.isValid ? null : res.error || 'Incorrect IP. Please rewrite.');
+    if (res.isValid && res.cleanedValue && !isUnassignedIp(res.cleanedValue)) {
+      // Typing 10.0.0.3 shows 255.0.0.0: the class of the address decides
+      // the mask, the way Packet Tracer fills it in, so the stale value in
+      // the mask field never survives a new address.
+      setSubnetMask(classfulMaskFor(res.cleanedValue));
+      setSubnetError(null);
+    }
   };
 
   const handleSubnetChange = (val: string) => {
     setSubnetMask(val);
     const res = validateSubnetMask(val);
-    setSubnetError(res.isValid ? null : res.error || 'Incorrect Subnet Mask. Please rewrite.');
+    if (!res.isValid) {
+      setSubnetError(res.error || 'Incorrect Subnet Mask. Please rewrite.');
+      return;
+    }
+    const pair = validateIpMaskPair(ipAddress, val);
+    setSubnetError(pair.isValid ? null : pair.error || 'Incorrect Subnet Mask for this address. Please rewrite.');
   };
 
   const handleGatewayChange = (val: string) => {
@@ -155,8 +189,11 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
 
   const handleStartEditIface = (iface: NetworkInterface) => {
     setEditingIfaceId(iface.id);
-    setEditingIfaceIp(iface.ipAddress && iface.ipAddress !== 'unassigned' ? iface.ipAddress : '');
-    setEditingIfaceMask(iface.subnetMask || '255.255.255.0');
+    const ip = iface.ipAddress && iface.ipAddress !== 'unassigned' ? iface.ipAddress : '';
+    setEditingIfaceIp(ip);
+    // Same rule as the primary address: a valid IP implies its classful
+    // mask, so a stale /30 beside 10.0.0.1 cannot be saved back unnoticed.
+    setEditingIfaceMask(ip ? classfulMaskFor(ip) : iface.subnetMask || '255.255.255.0');
     setIfaceIpError(null);
     setIfaceMaskError(null);
   };
@@ -171,6 +208,11 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
     }
     if (!maskRes.isValid) {
       setIfaceMaskError(maskRes.error || 'Incorrect subnet mask. Please rewrite.');
+      return;
+    }
+    const pairRes = validateIpMaskPair(editingIfaceIp, editingIfaceMask);
+    if (!pairRes.isValid) {
+      setIfaceMaskError(pairRes.error || 'Incorrect subnet mask for this address. Please rewrite.');
       return;
     }
 
@@ -568,6 +610,11 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
                             setEditingIfaceIp(e.target.value);
                             const res = validateIPv4(e.target.value, 'Interface IP', true);
                             setIfaceIpError(res.isValid ? null : res.error || 'Incorrect IP. Please rewrite.');
+                            if (res.isValid && res.cleanedValue && !isUnassignedIp(res.cleanedValue)) {
+                              // The mask follows the address: 10.0.0.3 shows 255.0.0.0.
+                              setEditingIfaceMask(classfulMaskFor(res.cleanedValue));
+                              setIfaceMaskError(null);
+                            }
                           }}
                           placeholder="e.g. 192.168.1.1 or unassigned"
                           className={`w-full px-2 py-1 rounded bg-base text-ink text-xs focus:outline-none ${
@@ -590,7 +637,14 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
                           onChange={(e) => {
                             setEditingIfaceMask(e.target.value);
                             const res = validateSubnetMask(e.target.value);
-                            setIfaceMaskError(res.isValid ? null : res.error || 'Incorrect mask. Please rewrite.');
+                            if (!res.isValid) {
+                              setIfaceMaskError(res.error || 'Incorrect mask. Please rewrite.');
+                              return;
+                            }
+                            const pair = validateIpMaskPair(editingIfaceIp, e.target.value);
+                            setIfaceMaskError(
+                              pair.isValid ? null : pair.error || 'Incorrect mask for this address. Please rewrite.'
+                            );
                           }}
                           placeholder="e.g. 255.255.255.0"
                           className={`w-full px-2 py-1 rounded bg-base text-ink text-xs focus:outline-none ${

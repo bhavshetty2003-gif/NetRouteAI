@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NetworkDevice, NetworkInterface } from '../types/network';
 import { Terminal, X, Maximize2, Minimize2, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
-import { validateIPv4, validateSubnetMask, validateDefaultGateway } from '../utils/validation';
+import { validateIPv4, validateSubnetMask, validateDefaultGateway, validateIpMaskPair } from '../utils/validation';
 import { pingLabDevice } from '../utils/api';
 
 interface CiscoCLIModalProps {
@@ -274,6 +274,9 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
 
           const ipValidation = validateIPv4(newIp, 'IP address');
           const maskValidation = validateSubnetMask(newMask);
+          // Both halves can pass their own format check and still disagree:
+          // a class A address with a class C mask is a wrong configuration.
+          const pairValidation = validateIpMaskPair(newIp, newMask);
 
           if (!ipValidation.isValid) {
             newOutput.push({
@@ -283,6 +286,11 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
           } else if (!maskValidation.isValid) {
             newOutput.push({
               text: `% Invalid input detected: ${maskValidation.error}. Please rewrite (e.g. 255.255.255.0).`,
+              type: 'error',
+            });
+          } else if (!pairValidation.isValid) {
+            newOutput.push({
+              text: `% Invalid input detected: ${pairValidation.error}`,
               type: 'error',
             });
           } else {
@@ -297,6 +305,10 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
               ...device,
               interfaces: updatedInterfaces,
               ipAddress: selectedInterface === device.interfaces[0]?.id ? newIp : device.ipAddress,
+              // The device record mirrors its first interface, so the
+              // properties panel does not show an address with a different
+              // mask than the CLI just wrote.
+              subnetMask: selectedInterface === device.interfaces[0]?.id ? newMask : device.subnetMask,
             };
             onUpdateDevice(updated);
             newOutput.push({ text: `IP address ${newIp} / ${newMask} assigned to ${selectedInterface}`, type: 'success' });

@@ -424,33 +424,32 @@ holding interfaces in more than one area, rather than asserted.
 
 ---
 
-## 7. OSPF path resolution — three sources
+## 7. OSPF path resolution — two live sources, or a raised refusal
 
-`backend/ospf_ai_service.py:471`. Which path is "the OSPF path" is the single most
-consequential decision on the Analytics page.
+`backend/ospf_ai_service.py:672` (`compare_ospf_vs_ai`). Which path is "the OSPF
+path" is the single most consequential decision on the Analytics page.
 
 ```mermaid
 flowchart TD
-    SRC["source, destination"] --> RIB["1. ospf_rib_path<br/>each router's 'show ip route ospf',<br/>longest-prefix walk — diagram 8"]
+    SRC["source, destination"] --> E2E["0. measure_path end-to-end FIRST:<br/>ping + traceroute, 12 ICMP requests<br/>(the refusal below quotes this measurement)"]
+    SRC --> RIB["1. ospf_rib_path<br/>each router's 'show ip route ospf',<br/>longest-prefix walk over graph G — diagram 8"]
     SRC --> TRACE["2. real_ospf_path<br/>traceroute: what is ACTUALLY<br/>being forwarded right now"]
-    SRC --> MODEL["3. ospf_path<br/>modelled shortest path over<br/>live interface costs"]
 
     RIB --> RIBOK{"RIB walk succeeded AND<br/>ends at the destination?"}
     RIBOK -- yes --> PICK1["OSPF PATH = RIB<br/>basis: 'OSPF RIB on each router<br/>(show ip route ospf)'"]
     RIBOK -- "no, or empty" --> TOK{"traceroute complete AND<br/>last hop == destination?"}
     TOK -- yes --> PICK2["OSPF PATH = traceroute<br/>basis: 'Live forwarding path'"]
-    TOK -- no --> PICK3["OSPF PATH = modelled<br/>basis: 'Modelled shortest path on<br/>live interface cost'"]
+    TOK -- no --> RAISE["RAISE LabUnavailable (HTTP 503):<br/>the pair is not measurable. The message is<br/>_diagnose(end_to_end), e.g. 'Path breaks after<br/>3 hop(s); the remaining hops did not<br/>answer ICMP.' — what was OBSERVED, not modelled"]
 
-    PICK1 --> EMPTY{"path empty?"}
-    PICK2 --> EMPTY
-    PICK3 --> EMPTY
-    EMPTY -- yes --> E1["LabUnavailable: no OSPF path<br/>between source and destination"]
-    EMPTY -- no --> MEAS["_measure_path_hops — diagram 11"]
+    PICK1 --> MEAS["_measure_path_hops — diagram 11"]
+    PICK2 --> MEAS
 
     NOTE["traceroute is kept SEPARATELY as path_taken:<br/>it is the ground truth for what is<br/>actually being forwarded"] -.-> TRACE
+    KILL["There is NO modelled fallback.<br/>ospf_path() (hand-rolled undirected Dijkstra)<br/>is deleted: it can disagree with FRR, and it<br/>usually duplicated the AI path."] -.-> RAISE
 
     style RIB fill:#eef7ee,stroke:#3d7a3d
     style TRACE fill:#fdf0e6,stroke:#b5651d
+    style RAISE fill:#fbe9e9,stroke:#a33
 ```
 
 ### Why the RIB is authoritative and traceroute is not
@@ -461,36 +460,42 @@ path" means the page compares the AI path against itself and always declares a
 match. The RIB is unaffected by injected static routes, so it is what OSPF itself
 would forward.
 
-A hand-rolled SPF is also unreliable in general. **OSPF charges cost on each
-router's own outgoing interface** — RFC 2328 §2.1.2 states that "a cost is
-associated with the output side of each router interface" and models the result as
-a *directed* graph — so an interface can cost 5 outbound and 20 on the return
-direction, which a symmetric undirected graph cannot express. A modelled SPF can
-therefore disagree with what the routers forward.
-
-In *this* lab that particular trap is not armed: `ip ospf cost {link cost}` is
-applied to both ends of a link, so costs here are symmetric and a modelled SPF would
-happen to agree. It is still not trusted, for two reasons that do apply — the OSPF
-RIB remains the authority on what OSPF would forward (it is unaffected by injected
-static routes), and a directed cost model is one config change away from mattering.
-The modelled path survives only as a labelled last resort, and the basis string says
-"modelled shortest path" so the word *Dijkstra* cannot reappear in the UI.
+A hand-rolled SPF is unreliable in general and is **deleted here entirely**, not
+kept as a labelled last resort. **OSPF charges cost on each router's own outgoing
+interface** — RFC 2328 §2.1.2 states that "a cost is associated with the output
+side of each router interface" and models the result as a *directed* graph — so an
+interface can cost 5 outbound and 20 on the return direction, which a symmetric
+undirected graph cannot express. In *this* lab that particular trap is not armed
+(`ip ospf cost {link cost}` is applied to both ends), but the modelled path had two
+failings that did apply: the RIB remains the authority on what OSPF would forward,
+and the modelled path usually duplicated the AI path, making it an unhelpful third
+answer. So when the RIB walk fails *and* the traceroute does not reach the
+destination, the comparison raises — with the measured end-to-end probe's observed
+reason — instead of inventing a route the routers were never asked about.
 
 ### `lab_graph` — the routable graph
 
-Built once per comparison and reused by every algorithm below:
+Built once per comparison and reused by every algorithm below. It is **live-state
+aware**: an interface that is administratively down, or shaped by `tc`, changes
+what the graph may claim.
 
 ```mermaid
 flowchart TD
     LAB["discovered lab"] --> COSTS["_interface_costs<br/>ONE 'vtysh -c show running-config' per router,<br/>split into interface stanzas<br/>vtysh has no per-interface config subcommand"]
-    COSTS --> TRANSIT["for each TRANSIT link:<br/>edge cost = the live 'ip ospf cost' on<br/>router A's interface in that subnet<br/>(fallback 10 if unreadable)"]
-    LAB --> LAN["for each LAN segment<br/>(grouped by bridge name):<br/>the ONE router on the segment is the<br/>gateway for its other members"]
-    TRANSIT --> JOIN["graph G<br/>cost is the only measured attribute;<br/>bandwidth/latency/loss on the edge<br/>are placeholders for the RF, and every<br/>DISPLAYED figure is measured elsewhere"]
+    LAB --> COND["_link_conditions: ONE exec per device<br/>'ip -br link; echo ===TC===; tc qdisc show'<br/>5 s TTL cache; /api/lab/link and<br/>/api/lab/impair invalidate it explicitly"]
+    COSTS --> TRANSIT["for each TRANSIT link:<br/>edge cost = the live 'ip ospf cost' on<br/>router A's interface in that subnet<br/>(fallback 10 if unreadable)<br/>SKIPPED if the interface is down at either end"]
+    COND --> TRANSIT
+    COSTS --> LAN
+    COND --> LAN["for each LAN segment<br/>(grouped by bridge name):<br/>the ONE router on the segment is the<br/>gateway for its other members<br/>— also skipped if down at either end"]
+    TRANSIT --> JOIN["graph G<br/>cost from the live OSPF config;<br/>latency / bandwidth / loss merged from the<br/>tc state of BOTH link ends (delays add,<br/>loss 1-(1-a)(1-b), rate = min)"]
     LAN --> JOIN
 
-    NOTE["Why transit-only: 'show ip route ospf' on r1<br/>lists exclusively 10.0.0.0/8 prefixes — the 192.168.x<br/>LANs appear only as connected routes on their<br/>own gateway. Hop identity is resolved by SUBNET<br/>MEMBERSHIP, not exact IP equality, because R1 is<br/>10.0.0.10 and R12 is 10.0.0.11 on the same /29."] -.-> JOIN
+    NOTE["Why this matters: 80 ms netem on R2–R11<br/>leaves OSPF on that link (tc does not change<br/>cost) and sends the AI around R3→R9→R10 —<br/>a difference driven by measured tc state.<br/>A failed exec treats the device as UP: fail<br/>open, never guess an edge out of existence."] -.-> JOIN
+
+    NOTE2["Why transit-only: 'show ip route ospf' on r1<br/>lists exclusively 10.0.0.0/8 prefixes — the 192.168.x<br/>LANs appear only as connected routes on their<br/>own gateway. Hop identity is resolved by SUBNET<br/>MEMBERSHIP, not exact IP equality, because R1 is<br/>10.0.0.10 and R12 is 10.0.0.11 on the same /29."] -.-> JOIN
 
     style COSTS fill:#e8f4f8,stroke:#0d6e85
+    style COND fill:#e8f4f8,stroke:#0d6e85
 ```
 
 ---
@@ -620,7 +625,7 @@ flowchart TD
     METHOD -- no --> E3["LabUnavailable: unknown method"]
     METHOD -- yes --> G["G = lab_graph(lab)"]
 
-    G --> OSPFPATH["resolve OSPF path — diagram 7<br/>RIB → traceroute → modelled"]
+    G --> OSPFPATH["resolve OSPF path — diagram 7<br/>RIB → traceroute → raise with diagnosis"]
     OSPFPATH --> OSPFM["_measure_path_hops(ospf) — diagram 11"]
     OSPFM --> AIPATH["rank_paths(G, s, d) — diagram 9"]
     AIPATH --> AIM["_measure_path_hops(ai)"]

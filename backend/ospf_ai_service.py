@@ -54,6 +54,13 @@ def lab_graph(lab: dict[str, Any]) -> nx.Graph:
 
     Edge costs follow the OSPF convention of a LAN costing more than a
     point-to-point transit link.
+
+    The graph is live state, not topology alone: a link whose interface is
+    administratively down is not drawn at all, and a link shaped with
+    netem/tbf carries that shape in its edge attributes (latency, loss,
+    bandwidth), so the Random Forest routes around what the operator actually
+    did while OSPF -- whose cost `tc` does not change -- does not. That
+    difference is the whole reason the two methods can disagree.
     """
     G = nx.Graph()
     for d in lab["devices"]:
@@ -61,38 +68,44 @@ def lab_graph(lab: dict[str, Any]) -> nx.Graph:
 
     client = _client()
     costs = _interface_costs(client, lab)
+    conditions = _link_conditions(lab)
 
     for link in lab["links"]:
         if link["kind"] != "transit":
             continue
         a, b = link["source"], link["target"]
-        cost = _ospf_cost(costs, lab, a, link.get("subnet"))
+        subnet = link.get("subnet")
+        if not _link_ends_up(lab, a, b, subnet, conditions):
+            continue
+        cost = _ospf_cost(costs, lab, a, subnet)
         G.add_edge(
             a,
             b,
             cost=cost if cost is not None else 10,
-            bandwidth=1000,
-            latency=0.2,
-            loss_probability=0.0,
+            **_link_shaped(lab, a, b, subnet, conditions),
             kind="transit",
         )
 
     # LANs: one router per segment acts as the gateway for the other members.
+    lan_subnets = {
+        l["network"]: l.get("subnet") for l in lab["links"] if l["kind"] == "lan"
+    }
     for network, members in _lan_segments(lab).items():
         gateways = [m for m in members if G.nodes[m].get("type") == "router"]
         if not gateways:
             continue
         gateway = gateways[0]
+        subnet = lan_subnets.get(network)
         for member in members:
             if member == gateway:
+                continue
+            if not _link_ends_up(lab, gateway, member, subnet, conditions):
                 continue
             G.add_edge(
                 gateway,
                 member,
                 cost=10,
-                bandwidth=1000,
-                latency=0.2,
-                loss_probability=0.0,
+                **_link_shaped(lab, gateway, member, subnet, conditions),
                 kind="lan",
             )
     return G
@@ -169,15 +182,203 @@ def _ospf_cost(
     return costs.get(device["container"], {}).get(iface)
 
 
-def ospf_path(G: nx.Graph, source: str, destination: str) -> list[str]:
-    """Fallback OSPF estimate: Dijkstra on the modelled interface costs.
+# --------------------------------------------------------------------------- #
+# Live interface state
+# --------------------------------------------------------------------------- #
+# The graph used to treat "Docker created this link" as "this link works":
+# every link was drawn with fixed defaults (1000 Mbps, 0.2 ms, 0 loss)
+# whatever the operator had since done to it. Both reported symptoms follow
+# from that -- a link taken down with `ip link set ... down` still routed, and
+# an interface shaped by `tc tbf rate 2mbit` looked identical to an untouched
+# one, so the Random Forest had nothing to route around and always agreed
+# with OSPF (whose cost `tc` does not change).
 
-    Only used when the live path cannot be read. Prefer `real_ospf_path`.
+_LINK_CONDITIONS_TTL = 5.0
+_link_conditions_cache: dict[str, Any] = {"key": None, "at": 0.0, "value": {}}
+
+
+def invalidate_link_conditions() -> None:
+    """Drop the cached interface state (call after links or tc change)."""
+    _link_conditions_cache["at"] = 0.0
+
+
+def _link_conditions(lab: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    """Admin state and traffic-control settings for every lab interface.
+
+    Returns `{device_id: {interface: {"up", "delay_ms", "loss_percent",
+    "rate_mbps"}}}`, read from `ip -br link` and `tc qdisc show` inside each
+    container with one combined exec rather than two.
+
+    The values are the *configuration*, not a measurement: netem's delay and
+    loss and tbf's rate are what `/api/lab/impair` injected, read back from the
+    qdisc tree, so a link the operator degraded is degraded in the graph too.
+    An untouched interface reports the neutral defaults the graph has always
+    used. A container whose commands both fail is simply absent, and every
+    caller treats "state unknown" as up: refusing to route over a link whose
+    state could not be read would delete routes whenever a container is
+    briefly busy.
+
+    Cached briefly because `lab_graph` and the RIB walk both need it and
+    neither can change faster than the next request. The link and impairment
+    endpoints call `invalidate_link_conditions`, so an operator's action lands
+    on the very next request instead of waiting out the TTL.
     """
-    try:
-        return nx.shortest_path(G, source, destination, weight="cost")
-    except (nx.NetworkXNoPath, nx.NodeNotFound):
-        return []
+    key = tuple(sorted(d["id"] for d in lab["devices"]))
+    now = time.monotonic()
+    cached = _link_conditions_cache
+    if cached["key"] == key and now - cached["at"] < _LINK_CONDITIONS_TTL:
+        return cached["value"]
+
+    conditions: dict[str, dict[str, dict[str, Any]]] = {}
+    for device in lab["devices"]:
+        _, out = _exec(
+            device["container"],
+            ["sh", "-c", "ip -br link; echo ===TC===; tc qdisc show"],
+            timeout=10,
+        )
+        if "===TC===" not in out:
+            # No marker means the shell itself failed (missing container, dead
+            # exec). Leave the device out; callers read absence as "unknown".
+            continue
+        link_part, _, tc_part = out.partition("===TC===")
+        conditions[device["id"]] = _parse_link_conditions(link_part, tc_part)
+
+    cached.update(key=key, at=now, value=conditions)
+    return conditions
+
+
+def _parse_link_conditions(link_part: str, tc_part: str) -> dict[str, dict[str, Any]]:
+    """Parse `ip -br link` + `tc qdisc show` sections into per-interface state.
+
+    `ip -br link` prints `IFNAME STATE ...` with the peer ifindex appended
+    (`eth0@if27`); the suffix is stripped because addresses and `tc qdisc`
+    both use the bare name. `UNKNOWN` counts as up -- loopback reports it and a
+    few drivers never learn operstate -- while DOWN covers both an
+    administratively down interface and one that lost carrier.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for line in link_part.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        name = parts[0].split("@", 1)[0]
+        if not name or name[0].isdigit():
+            continue  # not an `IFNAME STATE ...` row
+        out[name] = {
+            "up": parts[1] in ("UP", "UNKNOWN"),
+            "delay_ms": 0.0,
+            "loss_percent": 0.0,
+            "rate_mbps": None,
+        }
+
+    for line in tc_part.splitlines():
+        if not line.lstrip().startswith("qdisc"):
+            continue
+        dev = re.search(r"\bdev\s+(\S+)", line)
+        if not dev:
+            continue
+        entry = out.setdefault(
+            dev.group(1),
+            {"up": True, "delay_ms": 0.0, "loss_percent": 0.0, "rate_mbps": None},
+        )
+        delay = re.search(r"\bdelay\s+([\d.]+)(ms|us|s)\b", line)
+        if delay:
+            value = float(delay.group(1))
+            entry["delay_ms"] += (
+                value
+                if delay.group(2) == "ms"
+                else value / 1000.0
+                if delay.group(2) == "us"
+                else value * 1000.0
+            )
+        loss = re.search(r"\bloss\s+([\d.]+)%", line)
+        if loss:
+            entry["loss_percent"] = max(entry["loss_percent"], float(loss.group(1)))
+        rate = re.search(r"\brate\s+([\d.]+)(kbit|mbit|Mbit|gbit|Gbit|bit)\b", line)
+        if rate:
+            scale = {"bit": 1e-6, "kbit": 1e-3, "mbit": 1.0, "gbit": 1000.0}
+            mbps = float(rate.group(1)) * scale[rate.group(2).lower()]
+            # Two rate limiters on one interface chain: the tightest wins.
+            entry["rate_mbps"] = (
+                mbps if entry["rate_mbps"] is None else min(entry["rate_mbps"], mbps)
+            )
+    return out
+
+
+def _link_iface(lab: dict[str, Any], device_id: str, subnet: str | None) -> str | None:
+    """The interface of `device_id` that sits on `subnet`."""
+    device = next((d for d in lab["devices"] if d["id"] == device_id), None)
+    if not device:
+        return None
+    return next(
+        (name for name, addr in device["addresses"].items() if _in_subnet(addr, subnet)),
+        None,
+    )
+
+
+def _link_ends_up(
+    lab: dict[str, Any],
+    a: str,
+    b: str,
+    subnet: str | None,
+    conditions: dict[str, Any],
+) -> bool:
+    """False only when an interface on this link is *known* to be down.
+
+    A link record survives `ip link set ... down` -- only the interface knows
+    -- so state is checked here as well as in the graph. Without it the RIB
+    walk short-circuits across a dead link: with `r1 eth0` down, R2 still
+    reported R1 as directly connected, giving a walked path of R4->R2->R1
+    while packets really went R4->R2->R11->R12->R1. State that cannot be read
+    reads as up, so a busy container never silently deletes a route.
+    """
+    for side in (a, b):
+        iface = _link_iface(lab, side, subnet)
+        if not iface:
+            continue  # unresolvable: unknown, and unknown must not mean down
+        entry = conditions.get(side, {}).get(iface)
+        if entry and not entry["up"]:
+            return False
+    return True
+
+
+def _link_shaped(
+    lab: dict[str, Any],
+    a: str,
+    b: str,
+    subnet: str | None,
+    conditions: dict[str, Any],
+) -> dict[str, float]:
+    """Edge attributes for a link from what tc has configured on its ends.
+
+    Both ends count: netem delays egress in one direction only, so a ping's
+    round trip crosses both and two shaped ends add; the rate limit is the
+    tightest of the two, because a chain is only as fast as its narrowest hop.
+    Links nobody touched return the graph's historical defaults (0.2 ms, no
+    loss, 1000 Mbps) -- the same figures as always, now read from the qdisc
+    tree instead of assumed.
+    """
+    delay = 0.0
+    loss_percent = 0.0
+    rate: float | None = None
+    for side in (a, b):
+        iface = _link_iface(lab, side, subnet)
+        entry = conditions.get(side, {}).get(iface) if iface else None
+        if not entry:
+            continue
+        delay += float(entry["delay_ms"])
+        loss_percent = 100.0 * (
+            1.0 - (1.0 - loss_percent / 100.0) * (1.0 - float(entry["loss_percent"]) / 100.0)
+        )
+        if entry["rate_mbps"] is not None:
+            side_rate = float(entry["rate_mbps"])
+            rate = side_rate if rate is None else min(rate, side_rate)
+
+    return {
+        "bandwidth": 1000.0 if rate is None else rate,
+        "latency": 0.2 + delay,
+        "loss_probability": round(loss_percent / 100.0, 6),
+    }
 
 
 def _ip_owner_index(lab: dict[str, Any]) -> dict[str, str]:
@@ -201,8 +402,8 @@ def real_ospf_path(lab: dict[str, Any], source: str, destination: str) -> dict[s
     charges cost on each router's own outgoing interface (r1->r2 costs 5 while
     r2->r1 costs 20), which a symmetric undirected graph cannot express.
 
-    `truncated` is True when a hop answered but is not a known lab device, so the
-    caller can fall back to the modelled path.
+    `truncated` is True when a hop answered but is not a known lab device, so
+    the caller can tell a complete path from one it must refuse to report.
     """
     client = _client()
     src_dev = next((d for d in lab["devices"] if d["id"] == source), None)
@@ -504,19 +705,33 @@ def compare_ospf_vs_ai(
 
     G = lab_graph(lab)
 
-    # --- OSPF route, from three independent sources, most authoritative first.
+    # --- End-to-end measurement from the real source container ---
+    # Taken *before* the OSPF path is identified: when neither FRR's RIB nor
+    # traceroute can say how this pair is forwarded, the request fails -- and
+    # the failure must carry what was actually observed (no reply at all, the
+    # path stops at the gateway) instead of a bare "no path".
+    end_to_end = measure_path(source, destination, count=packet_count)
+    # Loss is a ratio of whole packets, so with a handful of packets the
+    # smallest loss that can be shown is 1/count. Saying so is better than
+    # letting "0.0%" imply a precision the sample never had.
+    end_to_end["loss_resolution_percent"] = round(100.0 / packet_count, 2)
+
+    # --- OSPF route, from FRR only: the RIB, then traceroute. ---
     #
     # 1. Each router's OSPF RIB: what OSPF itself decides, unaffected by any
     #    static route in effect.
     # 2. traceroute: what the network is actually forwarding right now.
-    # 3. Modelled shortest path over live interface costs, as a last resort.
     #
-    # (2) is what the previous implementation used on its own, which is wrong
-    # once the lab is steered: a static route makes traceroute report the AI
-    # path, and calling that "the OSPF path" would be circular.
-    rib = ospf_rib_path(lab, source, destination)
+    # (2) on its own was wrong once the lab is steered: a static route makes
+    # traceroute report the AI path, and calling that "the OSPF path" would be
+    # circular.
+    #
+    # There is deliberately no third, modelled fallback. If FRR cannot say,
+    # the answer is "FRR cannot say": a Python Dijkstra over the graph is a
+    # guess dressed as a reading, and this page's rule is that every figure
+    # traces back to a command run inside a lab container.
+    rib = ospf_rib_path(lab, source, destination, graph=G)
     live = real_ospf_path(lab, source, destination)
-    modelled = ospf_path(G, source, destination)
     traced_ok = bool(live["path"]) and not live["truncated"] and live["path"][-1] == destination
 
     if rib and rib[-1] == destination:
@@ -526,12 +741,14 @@ def compare_ospf_vs_ai(
         ospf = live["path"]
         ospf_basis = "Live forwarding path (traceroute)"
     else:
-        ospf = modelled
-        ospf_basis = (
-            "Modelled shortest path on live interface cost (traceroute hop unattributable)"
+        observed = _diagnose(end_to_end) or (
+            f"{source} and {destination} do answer each other "
+            f"({end_to_end['packets_received']}/{end_to_end['packets_sent']} replies), "
+            "but neither the OSPF RIB nor traceroute identifies the forwarding path"
         )
-    if not ospf:
-        raise LabUnavailable(f"No OSPF path between {source} and {destination}")
+        raise LabUnavailable(
+            f"No OSPF path between {source} and {destination}: {observed}"
+        )
 
     ospf_measurements = _measure_path_hops(ospf, lab)
 
@@ -541,13 +758,6 @@ def compare_ospf_vs_ai(
         raise LabUnavailable(ranked["error"])
     ai = ranked["best"]["path"]
     ai_measurements = _measure_path_hops(ai, lab)
-
-    # --- End-to-end measurement from the real source container ---
-    end_to_end = measure_path(source, destination, count=packet_count)
-    # Loss is a ratio of whole packets, so with a handful of packets the
-    # smallest loss that can be shown is 1/count. Saying so is better than
-    # letting "0.0%" imply a precision the sample never had.
-    end_to_end["loss_resolution_percent"] = round(100.0 / packet_count, 2)
 
     traced = resolve_traced_hops(end_to_end.get("hops", []), lab)
     walked_with_gaps = path_taken(traced, source)
@@ -714,9 +924,19 @@ def _ospf_nexthop(entries: list[dict[str, Any]], dest_ip: str) -> dict[str, Any]
 
 
 def _directly_linked(lab: dict[str, Any], a: str, b: str) -> bool:
-    """True when two lab devices share a link."""
+    """True when two lab devices share a link that can carry traffic.
+
+    The link record survives `ip link set ... down` -- only the interface
+    knows -- so the interface state is checked here too, not just in the
+    graph. Otherwise the RIB walk short-circuits across a dead link (with
+    `r1 eth0` down it still called R2->R1 direct, while forwarding actually
+    went R2->R11->R12->R1).
+    """
+    conditions = _link_conditions(lab)
     for link in lab["links"]:
-        if {link["source"], link["target"]} == {a, b}:
+        if {link["source"], link["target"]} == {a, b} and _link_ends_up(
+            lab, a, b, link.get("subnet"), conditions
+        ):
             return True
     return False
 
@@ -894,6 +1114,11 @@ def path_for_method(lab: dict[str, Any], method: str, source: str, destination: 
 
     Used by the steer endpoint, which must not depend on a prior
     `/api/analytics/live` call having happened.
+
+    OSPF answers from FRR only -- the RIB, then traceroute -- and reports `[]`
+    when neither identifies a path, because a path the routers were never
+    asked about must not be steered into them; the endpoint turns `[]` into a
+    503 instead of installing static routes for a guess.
     """
     G = lab_graph(lab)
     if method == "ai":
@@ -902,7 +1127,13 @@ def path_for_method(lab: dict[str, Any], method: str, source: str, destination: 
             raise LabUnavailable(ranked["error"])
         return ranked["best"]["path"]
     if method == "ospf":
-        return ospf_path(G, source, destination) or []
+        rib = ospf_rib_path(lab, source, destination, graph=G)
+        if rib and rib[-1] == destination:
+            return rib
+        live = real_ospf_path(lab, source, destination)
+        if live["path"] and not live["truncated"] and live["path"][-1] == destination:
+            return live["path"]
+        return []
     raise LabUnavailable(
         f"Unknown routing method '{method}'. Use one of: {', '.join(ROUTING_METHODS)}"
     )

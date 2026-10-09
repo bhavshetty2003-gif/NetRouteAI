@@ -1,0 +1,6 @@
+# Only the source and lockfile are needed to build; node_modules and dist are
+# rebuilt inside the image and must not shadow or bloat the context.
+node_modules
+dist
+.harness
+*.log

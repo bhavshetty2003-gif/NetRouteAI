@@ -27,6 +27,7 @@ Surface:
 """
 
 import logging
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -98,12 +99,16 @@ from models import (
     UploadTopologyRequest,
     UploadTopologyResponse,
 )
-from ospf_ai_service import compare_ospf_vs_ai, path_for_method
+from ospf_ai_service import compare_ospf_vs_ai, invalidate_link_conditions, path_for_method
 from route_steer import apply_steer, revert_steer, static_routes, steer_plan  # noqa: F401
 from routing_service import dijkstra_route, get_topology, random_forest_route, store_topology
 from simulation_service import simulate_packets
 
 logger = logging.getLogger("netroute.dataset")
+# Plan/deploy refusals go to the log as well as the response. A 400 whose
+# detail only reaches the browser leaves nothing to diagnose server-side --
+# that is exactly how a refused plan once stayed invisible here.
+deploy_logger = logging.getLogger("netroute.deploy")
 
 init_db()
 auth_db.init_auth_db()
@@ -270,6 +275,7 @@ def lab_deploy_plan(request: DeployRequest):
     try:
         plan = resolve_plan(request.topology)
     except DeployError as exc:
+        deploy_logger.warning("plan refused: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "ok": True,
@@ -293,6 +299,7 @@ def lab_deploy(request: DeployRequest):
     try:
         return deploy(request.topology, wait_seconds=request.wait_seconds)
     except DeployError as exc:
+        deploy_logger.warning("deploy refused: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -302,6 +309,7 @@ def lab_deploy_enterprise():
     try:
         return deploy_enterprise()
     except DeployError as exc:
+        deploy_logger.warning("enterprise deploy refused: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -840,18 +848,22 @@ def lab_impair(request: ImpairRequest):
     try:
         client = _client()
         if request.clear:
-            return clear_impairment(client, container, request.interface)
-
-        params: dict[str, float] = {}
-        for key in ("delay", "loss", "jitter", "corrupt", "duplicate", "reorder", "bandwidth"):
-            value = getattr(request, key, None)
-            if value:
-                params[key] = float(value)
-        if not params:
-            raise HTTPException(status_code=400, detail="No impairment parameters supplied")
-        return apply_impairment(client, container, request.interface, **params)
+            result = clear_impairment(client, container, request.interface)
+        else:
+            params: dict[str, float] = {}
+            for key in ("delay", "loss", "jitter", "corrupt", "duplicate", "reorder", "bandwidth"):
+                value = getattr(request, key, None)
+                if value:
+                    params[key] = float(value)
+            if not params:
+                raise HTTPException(status_code=400, detail="No impairment parameters supplied")
+            result = apply_impairment(client, container, request.interface, **params)
     except LabUnavailable as exc:
         raise _lab_error(exc) from exc
+    # The routing graph reads tc's configuration, so make the next request
+    # see this one's change instead of the cached previous state.
+    invalidate_link_conditions()
+    return result
 
 
 @app.post("/api/lab/link")
@@ -868,9 +880,13 @@ def lab_link(request: LinkStateRequest):
         raise _lab_error(LabUnavailable(f"'{request.device}' is not in the running lab"))
 
     try:
-        return set_link_state(_client(), container, request.interface, up=request.up)
+        result = set_link_state(_client(), container, request.interface, up=request.up)
     except LabUnavailable as exc:
         raise _lab_error(exc) from exc
+    # A link the graph cached as usable just went away (or came back); the
+    # next analytics request must not route over the stale reading.
+    invalidate_link_conditions()
+    return result
 
 
 @app.post("/api/lab/convergence")
@@ -1095,11 +1111,28 @@ def analytics_compare(request: AnalyticsCompareRequest):
     return AnalyticsCompareResponse(**compare_algorithms(topology, request.source, request.destination))
 
 
+# The UI and this API are different origins only in development: Vite serves
+# :3000, uvicorn serves :8000, and the browser notices. A deployed build is
+# served by nginx, which proxies /api, /upload-topology and /health to this
+# process, so the page and the API arrive at the browser as one origin and no
+# CORS header is ever consulted — the list below is what makes the dev layout
+# work, not what makes deployment work.
+#
+# Set CORS_ORIGINS (comma separated) when the UI is served from somewhere the
+# proxy does not cover, e.g. a static bundle on its own host.
+_DEFAULT_ORIGINS = (
+    "http://localhost:5173,http://127.0.0.1:5173,"
+    "http://localhost:3000,http://127.0.0.1:3000"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173", "http://127.0.0.1:5173",
-        "http://localhost:3000", "http://127.0.0.1:3000",
+        origin.strip()
+        # `or`, not a dict default: compose always sets the variable, and an
+        # explicitly empty one must fall back rather than clear the list.
+        for origin in (os.environ.get("CORS_ORIGINS") or _DEFAULT_ORIGINS).split(",")
+        if origin.strip()
     ],
     allow_credentials=True,
     allow_methods=["*"],

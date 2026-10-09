@@ -43,6 +43,7 @@ import {
   type DeployState,
   type DeployTopologyPayload,
 } from './utils/api';
+import { classfulMaskFor } from './utils/validation';
 import { createPacket, advancePacket } from './utils/simulationEngine';
 import { LiveMetricsPanel } from './components/LiveMetricsPanel';
 import { LabDeployBar } from './components/LabDeployBar';
@@ -404,11 +405,25 @@ export default function App() {
       // Upload topology to backend
       const { topology_id } = await uploadTopology(backendTopology);
 
-      // Auto-pick source and destination: prefer routers as endpoints
+      // Auto-pick source and destination: the canvas selection when one or
+      // two devices are picked, else the first and last router. The old code
+      // always analyzed endpoints[0] -> endpoints[last] with no selection
+      // check, so a canvas holding more devices than the pair in view
+      // reported a route nobody had asked about.
       const routers = devices.filter((d) => d.type === 'router');
       const endpoints = routers.length >= 2 ? routers : devices;
-      const source = endpoints[0].id;
-      const destination = endpoints[endpoints.length - 1].id;
+      const picked = selectedDeviceIds.filter((id) => devices.some((d) => d.id === id));
+      let source: string;
+      let destination: string;
+      if (picked.length === 2) {
+        [source, destination] = picked;
+      } else if (picked.length === 1) {
+        source = picked[0];
+        destination = (endpoints.find((d) => d.id !== source) ?? endpoints[endpoints.length - 1]).id;
+      } else {
+        source = endpoints[0].id;
+        destination = endpoints[endpoints.length - 1].id;
+      }
 
       // Get AI route recommendation
       const result = await getAiRouteRecommendation(topology_id, source, destination);
@@ -516,7 +531,14 @@ export default function App() {
       defaultInterfaces = createPCInterfaces();
     }
 
-    const id = `${prefix}${existingTypeCount}`;
+    // First unused number for this prefix, not the count of devices:
+    // deleting R2 of R1..R4 and adding a router used to mint a second "R3",
+    // and a canvas holding two devices with one id cannot be planned -- the
+    // backend refuses it, which is how one bad id left the whole lab stale.
+    const usedIds = new Set(devices.map((d) => d.id.toUpperCase()));
+    let seq = 1;
+    while (usedIds.has(`${prefix}${seq}`)) seq += 1;
+    const id = `${prefix}${seq}`;
     const x = atX !== undefined ? atX : 250 + (devices.length % 5) * 140;
     const y = atY !== undefined ? atY : 200 + Math.floor(devices.length / 5) * 100;
 
@@ -528,7 +550,9 @@ export default function App() {
       y,
       status: 'running',
       ipAddress: defaultIp,
-      subnetMask: '255.255.255.0',
+      // The mask follows the address's class (192.168.x.x -> 255.255.255.0),
+      // the same rule the properties panel and the backend allocator use.
+      subnetMask: classfulMaskFor(defaultIp),
       gateway: defaultGateway,
       macAddress: `00:1B:D4:${Math.floor(Math.random() * 89 + 10)}:${Math.floor(
         Math.random() * 89 + 10
@@ -753,6 +777,13 @@ export default function App() {
         .join(','),
     [cables]
   );
+  // Every device id, sorted. The plan is about devices as well as links: a
+  // duplicate or orphan router is exactly the sort of thing that made the
+  // backend refuse once, and with a link-only key the refusal was permanent
+  // -- nothing ever changed the key, so no further attempt was made. Removing
+  // the offending router now changes this key and the plan re-fires.
+  const deviceKey = useMemo(() => devices.map((d) => d.id).sort().join(','), [devices]);
+  const planKey = unaddressedKey ? `${unaddressedKey}|${deviceKey}` : '';
   // The key we last asked the backend about. Guarding on this rather than on
   // `isPlanning` alone is what stops a refusal from retrying forever: if the
   // backend cannot allocate, the key is unchanged and nothing re-fires.
@@ -764,8 +795,8 @@ export default function App() {
   // the routers get -- which is only guaranteed if the canvas is showing the
   // backend's own allocation before a deploy is possible.
   useEffect(() => {
-    if (!unaddressedKey || unaddressedKey === plannedKeyRef.current || isPlanning) return;
-    plannedKeyRef.current = unaddressedKey;
+    if (!planKey || planKey === plannedKeyRef.current || isPlanning) return;
+    plannedKeyRef.current = planKey;
     let cancelled = false;
     (async () => {
       setIsPlanning(true);
@@ -779,7 +810,7 @@ export default function App() {
         // (a new link, a changed class) trigger another pass.
         plannedKeyRef.current = '';
       } catch (err) {
-        plannedKeyRef.current = unaddressedKey;
+        plannedKeyRef.current = planKey;
         if (!cancelled) {
           setLabMessage({
             kind: 'bad',
@@ -795,7 +826,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [unaddressedKey, buildDeployPayload, adoptPlan, isPlanning]);
+  }, [planKey, buildDeployPayload, adoptPlan, isPlanning]);
 
   const handleDeploy = useCallback(async () => {
     setIsDeploying(true);
@@ -1683,7 +1714,11 @@ export default function App() {
             </div>
           </div>
         ) : activeTab === 'analytics' ? (
-          <AnalyticsView devices={devices} />
+          <AnalyticsView
+            devices={devices}
+            cables={cables}
+            onOpenDesigner={() => setActiveTab('designer')}
+          />
         ) : (
           <MonitoringView devices={devices} />
         )}
