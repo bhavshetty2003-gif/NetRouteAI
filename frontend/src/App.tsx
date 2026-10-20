@@ -17,7 +17,6 @@ import {
   PacketSimulationState,
 } from './types/network';
 import {
-  getDefaultTopology,
   getStarTopology,
   getMeshTopology,
   getRingTopology,
@@ -78,7 +77,7 @@ import { clearTopology, loadTopology, saveTopology } from './utils/topologyStore
 
 /** Presets offered in the toolbar. `twelve` is the 12-router multi-area
  *  topology the measurement work was verified against. */
-type PresetName = 'default' | 'star' | 'mesh' | 'tree' | 'bus' | 'ring' | 'twelve';
+type PresetName = 'star' | 'mesh' | 'tree' | 'bus' | 'ring' | 'twelve';
 
 export default function App() {
   // Navigation - defaults to comprehensive Home landing page
@@ -181,8 +180,13 @@ export default function App() {
   // Packet Simulator Modal State
   const [packetSimModalOpen, setPacketSimModalOpen] = useState<boolean>(false);
 
-  // AI Route Recommendation state
+  // AI Route Recommendation state. The pair travels with the result so the
+  // banner can say which source/destination it describes instead of showing a
+  // route with no pair next to it.
   const [aiRouteResult, setAiRouteResult] = useState<AiRouteRecommendation | null>(null);
+  const [aiRoutePair, setAiRoutePair] = useState<{ source: string; destination: string } | null>(
+    null
+  );
   const [isAiAnalyzing, setIsAiAnalyzing] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -314,6 +318,9 @@ export default function App() {
   // Packet generator handlers
   const handleStartPacketGenerator = (config: PacketGeneratorConfig) => {
     setPacketGeneratorConfig(config);
+    // The banner must describe the pair these packets are actually sent
+    // between, not whichever pair the canvas selection last sent.
+    void refreshAiRoute(config.sourceId, config.destinationId);
     let sent = 0;
     const sendPacket = () => {
       if (sent >= config.packetCount) {
@@ -368,6 +375,74 @@ export default function App() {
     alert('Topology & annotations restored for this account.');
   };
 
+  /* Fetch the AI route for one exact source/destination pair.
+   *
+   * The recommendation endpoint ranks the paths in whichever topology it was
+   * last sent, so the canvas is uploaded immediately before every query. The
+   * route shown is then the route for the pair being asked about on the canvas
+   * as drawn, not for the pair that happened to be selected when the topology
+   * was first sent.
+   *
+   * The canvas selection used to fix a single pair at "Send Topology" time;
+   * the banner kept showing that one route while packets were sent between
+   * other devices, which is the mismatch being fixed here. Any packet a user
+   * actually sends now drives the banner.
+   *
+   * `aiRunRef` is a monotonic run counter: the canvas, the selection and the
+   * packet simulator can each trigger a query, and without it a slow earlier
+   * response could land last and overwrite the route for the current pair with
+   * one for a pair the user has already moved on from. */
+  const aiRunRef = useRef(0);
+  const refreshAiRoute = useCallback(
+    async (source: string, destination: string) => {
+      if (devices.length < 2 || !source || !destination || source === destination) return;
+
+      const run = ++aiRunRef.current;
+      setIsAiAnalyzing(true);
+      setAiError(null);
+      // Clear before the new answer lands: leaving the previous pair's route on
+      // screen is exactly the wrong-pair banner this replaces.
+      setAiRouteResult(null);
+      setAiRoutePair(null);
+
+      try {
+        const backendTopology = {
+          devices: devices.map((d) => ({
+            id: d.id,
+            type: d.type,
+            name: d.name,
+            x: d.x,
+            y: d.y,
+            ip_address: d.ipAddress || undefined,
+            gateway: d.gateway || undefined,
+          })),
+          links: cables.map((c) => ({
+            source: c.fromDeviceId,
+            target: c.toDeviceId,
+            cost: c.cost,
+            bandwidth: c.bandwidth,
+            latency: c.latency,
+            loss_probability: c.lossProbability,
+          })),
+          auto_ip: true,
+        };
+
+        const { topology_id } = await uploadTopology(backendTopology);
+        const result = await getAiRouteRecommendation(topology_id, source, destination);
+        if (run !== aiRunRef.current) return; // a newer query superseded this one
+        setAiRouteResult(result);
+        setAiRoutePair({ source, destination });
+      } catch (e: any) {
+        if (run !== aiRunRef.current) return;
+        setAiError(e.message || 'AI analysis failed');
+        console.error('AI route error:', e);
+      } finally {
+        if (run === aiRunRef.current) setIsAiAnalyzing(false);
+      }
+    },
+    [devices, cables]
+  );
+
   // Send Topology to AI Backend for Route Recommendation
   const handleSendTopology = async () => {
     if (devices.length < 2) {
@@ -375,65 +450,34 @@ export default function App() {
       return;
     }
 
-    setIsAiAnalyzing(true);
-    setAiError(null);
-    setAiRouteResult(null);
-
-    try {
-      // Convert frontend topology to backend format
-      const backendTopology = {
-        devices: devices.map((d) => ({
-          id: d.id,
-          type: d.type,
-          name: d.name,
-          x: d.x,
-          y: d.y,
-          ip_address: d.ipAddress || undefined,
-          gateway: d.gateway || undefined,
-        })),
-        links: cables.map((c) => ({
-          source: c.fromDeviceId,
-          target: c.toDeviceId,
-          cost: c.cost,
-          bandwidth: c.bandwidth,
-          latency: c.latency,
-          loss_probability: c.lossProbability,
-        })),
-        auto_ip: true,
-      };
-
-      // Upload topology to backend
-      const { topology_id } = await uploadTopology(backendTopology);
-
-      // Auto-pick source and destination: the canvas selection when one or
-      // two devices are picked, else the first and last router. The old code
-      // always analyzed endpoints[0] -> endpoints[last] with no selection
-      // check, so a canvas holding more devices than the pair in view
-      // reported a route nobody had asked about.
-      const routers = devices.filter((d) => d.type === 'router');
-      const endpoints = routers.length >= 2 ? routers : devices;
-      const picked = selectedDeviceIds.filter((id) => devices.some((d) => d.id === id));
-      let source: string;
-      let destination: string;
-      if (picked.length === 2) {
-        [source, destination] = picked;
-      } else if (picked.length === 1) {
-        source = picked[0];
-        destination = (endpoints.find((d) => d.id !== source) ?? endpoints[endpoints.length - 1]).id;
+    // Auto-pick source and destination: the canvas selection when one or
+    // two devices are picked, else the first and last router. The old code
+    // always analyzed endpoints[0] -> endpoints[last] with no selection
+    // check, so a canvas holding more devices than the pair in view
+    // reported a route nobody had asked about.
+    const routers = devices.filter((d) => d.type === 'router');
+    const endpoints = routers.length >= 2 ? routers : devices;
+    const picked = selectedDeviceIds.filter((id) => devices.some((d) => d.id === id));
+    let source: string;
+    let destination: string;
+    if (picked.length === 2) {
+      [source, destination] = picked;
+    } else if (picked.length === 1) {
+      source = picked[0];
+      const other = endpoints.find((d) => d.id !== source);
+      destination = other ? other.id : endpoints[endpoints.length - 1].id;
+    } else {
+      // For 12-router preset, default to R1 -> R10 for a more interesting path
+      if (routers.length === 12 && routers.some((r) => r.id === 'R1') && routers.some((r) => r.id === 'R10')) {
+        source = 'R1';
+        destination = 'R10';
       } else {
         source = endpoints[0].id;
-        destination = endpoints[endpoints.length - 1].id;
+        destination = endpoints.length > 1 ? endpoints[1].id : endpoints[0].id;
       }
-
-      // Get AI route recommendation
-      const result = await getAiRouteRecommendation(topology_id, source, destination);
-      setAiRouteResult(result);
-    } catch (e: any) {
-      setAiError(e.message || 'AI analysis failed');
-      console.error('Send Topology error:', e);
-    } finally {
-      setIsAiAnalyzing(false);
     }
+
+    await refreshAiRoute(source, destination);
   };
 
   // Compute which cable IDs are on the AI-recommended path (for green highlighting)
@@ -472,9 +516,8 @@ export default function App() {
       case 'ring':
         newTop = getRingTopology();
         break;
-      case 'default':
       default:
-        newTop = getDefaultTopology();
+        newTop = { devices: [], cables: [] };
         break;
     }
     setDevices(newTop.devices);
@@ -1189,6 +1232,11 @@ export default function App() {
 
   // Packet Simulator Engine: Hop-by-hop traversal
   const handleStartSimulation = (sourceId: string, targetId: string, speedMs: number = 400) => {
+    // Whatever pair is being transmitted is the pair the AI banner should
+    // describe. Previously the route was fixed at "Send Topology" time and
+    // stayed on screen for a different pair entirely.
+    void refreshAiRoute(sourceId, targetId);
+
     // Discover route using BFS graph traversal
     const route = discoverRoute(sourceId, targetId, devices, cables);
 
@@ -1635,6 +1683,11 @@ export default function App() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-ok">AI Recommended Route</span>
+                        {aiRoutePair && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-raised text-ink-soft border border-line font-mono">
+                            {aiRoutePair.source} → {aiRoutePair.destination}
+                          </span>
+                        )}
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ok/20 text-ok border border-ok/30 font-mono">
                           {aiRouteResult.confidence}% confidence
                         </span>
@@ -1650,11 +1703,26 @@ export default function App() {
                       </div>
                     </div>
                     <button
-                      onClick={() => setAiRouteResult(null)}
+                      onClick={() => {
+                        setAiRouteResult(null);
+                        setAiRoutePair(null);
+                      }}
                       className="p-1 rounded-lg text-ink-faint hover:text-ink-soft hover:bg-panel transition-colors cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* AI Route Recomputation Indicator: shown while a route for a
+                  newly chosen pair is being fetched, so the gap between the
+                  old route clearing and the new one landing is explained. */}
+              {isAiAnalyzing && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-base/95 border border-accent/50 rounded-xl shadow-2xl px-4 py-2.5 max-w-lg">
+                  <div className="flex items-center gap-2 text-xs text-ink-soft font-mono">
+                    <Brain className="w-3.5 h-3.5 text-accent animate-pulse" />
+                    <span>Computing AI route…</span>
                   </div>
                 </div>
               )}

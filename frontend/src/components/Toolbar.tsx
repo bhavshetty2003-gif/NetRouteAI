@@ -23,7 +23,7 @@ interface ToolbarProps {
   selectedCount?: number;
   onSaveTopology: () => void;
   onLoadTopology: () => void;
-  onSelectPreset: (preset: 'default' | 'star' | 'mesh' | 'tree' | 'bus' | 'ring' | 'twelve') => void;
+  onSelectPreset: (preset: 'star' | 'mesh' | 'tree' | 'bus' | 'ring' | 'twelve') => void;
   onResetCanvas: () => void;
   isSimulating: boolean;
   onSendTopology: () => void;
@@ -209,16 +209,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   Cost, area and address on every link
                 </span>
               </button>
-              <div className="my-1 border-t border-line" />
-              <button
-                onClick={() => {
-                  onSelectPreset('default');
-                  setShowPresetsMenu(false);
-                }}
-                className="w-full text-left px-3 py-1.5 hover:bg-accent-soft/60 hover:text-accent transition-colors"
-              >
-                Default Enterprise
-              </button>
+
               <button
                 onClick={() => {
                   onSelectPreset('star');
