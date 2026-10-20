@@ -11,7 +11,7 @@ import {
   Palette,
   BoxSelect,
   CheckSquare,
-  Brain,
+  Rocket,
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -26,8 +26,11 @@ interface ToolbarProps {
   onSelectPreset: (preset: 'star' | 'mesh' | 'tree' | 'bus' | 'ring' | 'twelve') => void;
   onResetCanvas: () => void;
   isSimulating: boolean;
-  onSendTopology: () => void;
-  isAiAnalyzing: boolean;
+  /** Sends the drawn topology to the backend, which builds it as the lab. */
+  onDeploy: () => void;
+  isDeploying: boolean;
+  /** False when the canvas does not yet have enough to build a lab. */
+  canDeploy: boolean;
   // Drawing Palette & Multi-select props
   isDrawingPaletteOpen: boolean;
   onToggleDrawingPalette: () => void;
@@ -48,8 +51,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onSelectPreset,
   onResetCanvas,
   isSimulating,
-  onSendTopology,
-  isAiAnalyzing,
+  onDeploy,
+  isDeploying,
+  canDeploy,
   isDrawingPaletteOpen,
   onToggleDrawingPalette,
   onSelectAllDevices,
@@ -124,20 +128,27 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span>Select All</span>
         </button>
 
-        {/* Send Topology to AI Button */}
+        {/* Deploy Button — sends the drawn topology to the backend, which
+            generates the compose + FRR config and starts the lab. */}
         <button
-          id="toolbar-send-topology-btn"
-          onClick={onSendTopology}
-          disabled={isAiAnalyzing}
-          className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-            isAiAnalyzing
+          id="toolbar-deploy-btn"
+          onClick={onDeploy}
+          disabled={isDeploying || !canDeploy}
+          className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            isDeploying
               ? 'bg-ai/80 text-accent-ink cursor-wait'
-              : 'bg-gradient-to-r from-ai to-info hover:from-ai hover:to-info text-accent-ink shadow-md shadow-lift-strong'
+              : canDeploy
+                ? 'bg-gradient-to-r from-ai to-info hover:from-ai hover:to-info text-accent-ink shadow-md shadow-lift-strong cursor-pointer'
+                : 'bg-panel/40 text-ink-faint border border-line cursor-not-allowed'
           }`}
-          title="Send topology to AI engine for route analysis"
+          title={
+            canDeploy
+              ? 'Send this topology to the backend and build it as the running lab'
+              : 'Draw at least two routers and connect them to deploy'
+          }
         >
-          <Brain className="w-3.5 h-3.5" />
-          <span>{isAiAnalyzing ? 'Analyzing...' : 'Send Topology'}</span>
+          <Rocket className="w-3.5 h-3.5" />
+          <span>{isDeploying ? 'Deploying...' : 'Deploy'}</span>
         </button>
 
         {/* Send Packet Button */}

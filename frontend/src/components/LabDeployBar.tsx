@@ -1,5 +1,5 @@
 import React from 'react';
-import { Container, Rocket, Trash2, Building2, Loader2, TriangleAlert, CircleCheck } from 'lucide-react';
+import { Container, Trash2, Building2, Loader2, TriangleAlert, CircleCheck } from 'lucide-react';
 import type { DeployState } from '../utils/api';
 
 interface LabDeployBarProps {
@@ -13,7 +13,6 @@ interface LabDeployBarProps {
   isPlanning: boolean;
   message: { kind: 'ok' | 'bad'; text: string } | null;
   onPlan: () => void;
-  onDeploy: () => void;
   onTeardown: () => void;
   onDeployEnterprise: () => void;
 }
@@ -35,7 +34,6 @@ export const LabDeployBar: React.FC<LabDeployBarProps> = ({
   isPlanning,
   message,
   onPlan,
-  onDeploy,
   onTeardown,
   onDeployEnterprise,
 }) => {
@@ -74,17 +72,6 @@ export const LabDeployBar: React.FC<LabDeployBarProps> = ({
           >
             {isPlanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Container className="w-3 h-3" />}
             Plan addresses
-          </button>
-
-          <button
-            type="button"
-            onClick={onDeploy}
-            disabled={isBusy || !canDeploy}
-            className="flex items-center gap-1.5 rounded border border-accent/50 bg-accent-soft px-2.5 py-1.5 text-[11px] font-semibold text-accent hover:border-accent disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Build this canvas as a real lab"
-          >
-            {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Rocket className="w-3 h-3" />}
-            {isBusy ? 'Building…' : 'Build lab from this canvas'}
           </button>
 
           {running && (

@@ -383,10 +383,10 @@ export default function App() {
    * as drawn, not for the pair that happened to be selected when the topology
    * was first sent.
    *
-   * The canvas selection used to fix a single pair at "Send Topology" time;
-   * the banner kept showing that one route while packets were sent between
-   * other devices, which is the mismatch being fixed here. Any packet a user
-   * actually sends now drives the banner.
+   * The canvas selection used to fix a single pair before the topology was
+   * sent; the banner kept showing that one route while packets were sent
+   * between other devices, which is the mismatch being fixed here. Any packet
+   * a user actually sends now drives the banner.
    *
    * `aiRunRef` is a monotonic run counter: the canvas, the selection and the
    * packet simulator can each trigger a query, and without it a slow earlier
@@ -442,43 +442,6 @@ export default function App() {
     },
     [devices, cables]
   );
-
-  // Send Topology to AI Backend for Route Recommendation
-  const handleSendTopology = async () => {
-    if (devices.length < 2) {
-      alert('Add at least 2 devices to analyze.');
-      return;
-    }
-
-    // Auto-pick source and destination: the canvas selection when one or
-    // two devices are picked, else the first and last router. The old code
-    // always analyzed endpoints[0] -> endpoints[last] with no selection
-    // check, so a canvas holding more devices than the pair in view
-    // reported a route nobody had asked about.
-    const routers = devices.filter((d) => d.type === 'router');
-    const endpoints = routers.length >= 2 ? routers : devices;
-    const picked = selectedDeviceIds.filter((id) => devices.some((d) => d.id === id));
-    let source: string;
-    let destination: string;
-    if (picked.length === 2) {
-      [source, destination] = picked;
-    } else if (picked.length === 1) {
-      source = picked[0];
-      const other = endpoints.find((d) => d.id !== source);
-      destination = other ? other.id : endpoints[endpoints.length - 1].id;
-    } else {
-      // For 12-router preset, default to R1 -> R10 for a more interesting path
-      if (routers.length === 12 && routers.some((r) => r.id === 'R1') && routers.some((r) => r.id === 'R10')) {
-        source = 'R1';
-        destination = 'R10';
-      } else {
-        source = endpoints[0].id;
-        destination = endpoints.length > 1 ? endpoints[1].id : endpoints[0].id;
-      }
-    }
-
-    await refreshAiRoute(source, destination);
-  };
 
   // Compute which cable IDs are on the AI-recommended path (for green highlighting)
   const aiPathCableIds = new Set<string>();
@@ -1233,8 +1196,8 @@ export default function App() {
   // Packet Simulator Engine: Hop-by-hop traversal
   const handleStartSimulation = (sourceId: string, targetId: string, speedMs: number = 400) => {
     // Whatever pair is being transmitted is the pair the AI banner should
-    // describe. Previously the route was fixed at "Send Topology" time and
-    // stayed on screen for a different pair entirely.
+    // describe. Previously the route was fixed once up front and stayed on
+    // screen for a different pair entirely.
     void refreshAiRoute(sourceId, targetId);
 
     // Discover route using BFS graph traversal
@@ -1515,8 +1478,9 @@ export default function App() {
               onSelectPreset={handleSelectPreset}
               onResetCanvas={handleResetCanvas}
               isSimulating={simulationState.active}
-              onSendTopology={handleSendTopology}
-              isAiAnalyzing={isAiAnalyzing}
+              onDeploy={handleDeploy}
+              isDeploying={isDeploying}
+              canDeploy={devices.filter((d) => d.type === 'router').length >= 2 && cables.length >= 1}
               isDrawingPaletteOpen={isDrawingPaletteOpen}
               onToggleDrawingPalette={() => setIsDrawingPaletteOpen(!isDrawingPaletteOpen)}
               onSelectAllDevices={handleSelectAllDevices}
@@ -1533,7 +1497,6 @@ export default function App() {
               isPlanning={isPlanning}
               message={labMessage}
               onPlan={handlePlanAddresses}
-              onDeploy={handleDeploy}
               onTeardown={handleTeardown}
               onDeployEnterprise={handleDeployEnterprise}
             />

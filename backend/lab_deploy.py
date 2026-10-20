@@ -369,6 +369,39 @@ def mask_for_class(address_class: str) -> str:
     return str(ipaddress.ip_network(f"0.0.0.0/{CLASS_PREFIX[address_class]}").netmask)
 
 
+def _bridge_pool(subnet: str, addresses: list[str]) -> str:
+    """The Docker bridge pool to pin for a link, holding every `addresses` entry.
+
+    The routers must be numbered classfully -- a Class A link is 10/8, a Class B
+    link is 172.16/16 -- but the *Docker bridge* must NOT be given that whole
+    block. A bridge pool of 10.0.0.0/8 or 172.16.0.0/16 claims every address in
+    the range, so the next such network on the daemon, or the root
+    `netrouteai-app` stack, fails to create with "invalid pool request: Pool
+    overlaps with other one on this address space". That is exactly what broke a
+    deploy after a lab with a Class A or Class B link had once been up: the
+    leftover `netrouteai_n06` held 10.0.0.0/8 and every later create collided.
+
+    The smallest prefix that still contains the bridge gateway (.1) and both
+    router endpoints is pinned, so the pool cannot reach outside this link's own
+    range. A /24 or longer already spans only itself and is returned unchanged.
+    """
+    network = ipaddress.ip_network(subnet, strict=False)
+    if network.prefixlen >= 24:
+        return str(network)
+
+    # Grow the prefix from /29 upwards until every endpoint and the .1 gateway
+    # fall inside it. Taking a fixed /29 would fail the moment an endpoint was
+    # typed at, say, 192.168.0.50 -- Docker rejects an ipv4_address outside the
+    # network's pool.
+    members = [ipaddress.ip_address(a) for a in addresses if a]
+    members.append(ipaddress.ip_address(int(network.network_address) + 1))
+    for prefix in range(29, network.prefixlen - 1, -1):
+        candidate = ipaddress.ip_network((int(network.network_address), prefix))
+        if all(address in candidate for address in members):
+            return str(candidate)
+    return str(network)
+
+
 def _class_candidates(address_class: str) -> list[ipaddress.IPv4Network]:
     """Every subnet this class can hand out, in allocation order."""
     if address_class == CLASS_A:
@@ -582,6 +615,13 @@ def _write_compose(plan: dict[str, Any]) -> None:
     # an arbitrary pool and the addresses the designer chose -- the ones this
     # module already handed back to the canvas -- would not be the ones the
     # routers end up with.
+    #
+    # The pool pinned here is NOT the link's classful subnet. A Class A link is
+    # 10/8 and a Class B link is 172.16/16 for the *routers*, but a bridge
+    # claiming 10.0.0.0/8 or 172.16.0.0/16 takes every address in the range and
+    # the next create on the daemon fails with "Pool overlaps". The bridge only
+    # carries the .1 gateway and the two endpoints, so the smallest pool that
+    # still contains both is pinned instead -- see _bridge_pool.
     lines.append("")
     lines.append("networks:")
     for link in plan["links"]:
@@ -590,7 +630,7 @@ def _write_compose(plan: dict[str, Any]) -> None:
             "    driver: bridge",
             "    ipam:",
             "      config:",
-            f"        - subnet: {link['subnet']}",
+            f"        - subnet: {_bridge_pool(link['subnet'], [link['source_ip'], link['target_ip']])}",
         ]
 
     with open(os.path.join(LAB_DIR, "docker-compose.yml"), "w") as handle:
