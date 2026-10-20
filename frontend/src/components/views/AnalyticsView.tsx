@@ -1674,6 +1674,7 @@ function LabControls({
   const [device, setDevice] = useState(routerIds[0] ?? '');
   const [iface, setIface] = useState('eth0');
   const [delay, setDelay] = useState(0);
+  const [jitter, setJitter] = useState(0);
   const [loss, setLoss] = useState(0);
   const [rate, setRate] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1743,7 +1744,7 @@ function LabControls({
     }
   };
 
-  const impairing = delay > 0 || loss > 0 || rate > 0;
+  const impairing = delay > 0 || jitter > 0 || loss > 0 || rate > 0;
 
   return (
     <div className="card p-5 space-y-4">
@@ -1838,7 +1839,7 @@ function LabControls({
         {/* --------------------------------------------------- impairment */}
         <div className="bg-panel border border-line rounded-xl p-4 space-y-3">
           <span className="text-[11px] font-bold uppercase tracking-wider text-ink-muted">
-            Impair a link (tc netem / tbf)
+            Impair link (tc netem / tbf)
           </span>
           <div className="flex flex-wrap items-end gap-2">
             <div>
@@ -1868,7 +1869,7 @@ function LabControls({
               </select>
             </div>
             <div>
-              <label className="label" htmlFor="impair-delay">Delay ms</label>
+              <label className="label" htmlFor="impair-delay">Delay (ms)</label>
               <input
                 id="impair-delay"
                 type="number"
@@ -1879,7 +1880,18 @@ function LabControls({
               />
             </div>
             <div>
-              <label className="label" htmlFor="impair-loss">Loss %</label>
+              <label className="label" htmlFor="impair-jitter">Jitter (ms)</label>
+              <input
+                id="impair-jitter"
+                type="number"
+                min={0}
+                className="field w-20"
+                value={jitter}
+                onChange={(e) => setJitter(Number(e.target.value) || 0)}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="impair-loss">Loss (%)</label>
               <input
                 id="impair-loss"
                 type="number"
@@ -1891,7 +1903,7 @@ function LabControls({
               />
             </div>
             <div>
-              <label className="label" htmlFor="impair-rate">Cap Mbps</label>
+              <label className="label" htmlFor="impair-rate">Rate (Mbps)</label>
               <input
                 id="impair-rate"
                 type="number"
@@ -1912,15 +1924,16 @@ function LabControls({
                     device,
                     interface: iface,
                     delay: delay || undefined,
+                    jitter: jitter || undefined,
                     loss: loss || undefined,
                     bandwidth: rate || undefined,
                   });
                   if (r.errors?.length) throw new Error(r.errors.join('; '));
-                  return `Applied ${delay || 0}ms delay, ${loss || 0}% loss, ${rate ? `${rate}Mbps cap` : 'no cap'} to ${device}/${iface}`;
+                  return `Applied ${delay || 0}ms/${jitter || 0}ms jitter, ${loss || 0}% loss, ${rate ? `${rate} Mbps` : 'no limit'} to ${device}/${iface}`;
                 })
               }
             >
-              {busy === 'impair' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+              {busy === 'impair' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
               Apply
             </button>
             <button
@@ -1931,12 +1944,14 @@ function LabControls({
                   const r = await applyImpairment({ device, interface: iface, clear: true });
                   if (r.errors?.length) throw new Error(r.errors.join('; '));
                   setDelay(0);
+                  setJitter(0);
                   setLoss(0);
                   setRate(0);
-                  return `Cleared impairment on ${device}/${iface}`;
+                  return `Cleared ${device}/${iface}`;
                 })
               }
             >
+              {busy === 'clear' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
               Clear
             </button>
           </div>

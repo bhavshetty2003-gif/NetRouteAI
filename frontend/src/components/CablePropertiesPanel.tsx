@@ -1,7 +1,6 @@
 import React from 'react';
 import { NetworkCable } from '../types/network';
-import { Cable, X, Activity, Network, Hash } from 'lucide-react';
-import { ADDRESS_CLASSES, PREFIX_FOR_CLASS, type AddressClass } from '../utils/api';
+import { Cable, X, Activity, Hash } from 'lucide-react';
 
 interface CablePropertiesPanelProps {
   cable: NetworkCable | null;
@@ -31,8 +30,6 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
   const mask = cable.subnetMask || allocatedMask;
   const sourceIp = cable.sourceIp || allocatedSourceIp;
   const targetIp = cable.targetIp || allocatedTargetIp;
-  const addressClass: AddressClass = (cable.addressClass as AddressClass) || 'C';
-
   return (
     <div className="w-80 bg-base border-l border-line p-4 text-ink overflow-y-auto">
       <div className="flex items-center justify-between mb-4">
@@ -42,45 +39,7 @@ export const CablePropertiesPanel: React.FC<CablePropertiesPanelProps> = ({
         </h2>
       </div>
 
-      {/* Addressing: pick a class, the mask follows from it */}
-      <div className="mb-4">
-        <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">
-          <div className="flex items-center gap-1.5">
-            <Network className="w-3.5 h-3.5" />
-            Address Class
-          </div>
-        </label>
-        <div className="grid grid-cols-3 gap-1.5">
-          {ADDRESS_CLASSES.map((cls) => (
-            <button
-              key={cls}
-              type="button"
-              // Changing the class means "renumber this link into a different
-              // range", so the held address has to go with it. A supplied
-              // address always wins in the allocator, which is what keeps the
-              // canvas and the routers in agreement -- so leaving the old
-              // subnet in place would make the button do nothing at all. Clearing
-              // it puts the link back in the unaddressed set, and the auto-plan
-              // reallocates from the chosen class's block straight away.
-              onClick={() => {
-                if (cls === addressClass) return;
-                const { subnet: _s, subnetMask: _m, sourceIp: _from, targetIp: _to, ...rest } = cable;
-                onUpdateCable({ ...rest, addressClass: cls } as NetworkCable);
-              }}
-              className={`rounded border px-2 py-2 text-xs font-semibold transition-colors ${
-                addressClass === cls
-                  ? 'border-accent bg-accent-soft text-accent'
-                  : 'border-line bg-panel text-ink-muted hover:border-ink-faint'
-              }`}
-            >
-              Class {cls}
-              <span className="block font-mono text-[10px] font-normal opacity-80">
-                /{PREFIX_FOR_CLASS[cls]}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+
 
       {/* Allocated addresses, read-only: the lab is configured with these */}
       <div className="mb-4 p-3 bg-sunken rounded-lg border border-line">
