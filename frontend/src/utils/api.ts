@@ -535,6 +535,13 @@ export interface DeployResult {
   links: DeployLink[];
   areas: number[];
   interfaces: Record<string, Record<string, string>>;
+  /** Anything the backend had to change, said out loud.
+   *
+   *  A link that was given an address this machine is already using is moved
+   *  off it -- Docker gives every network it creates a route on the host, and
+   *  a route for the network the laptop is on takes the laptop's own traffic
+   *  away from its router. The move is reported rather than done quietly. */
+  notes?: string[];
 }
 
 export interface DeployState {

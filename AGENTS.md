@@ -14,7 +14,7 @@ Multi-package monorepo — each subproject has its own dependency manifest:
 | `shortest-path-demo/` | 5-router shortest-path demo |
 | `scripts/` | Maintenance utilities (`migrate_theme.py`, `audit_contrast.py`) |
 
-Root `README.md` and `requirements.txt` are intentionally empty. `tests/` and `database/` are empty placeholders. `docs/` holds `ALGORITHM_FLOWCHARTS.md` — 20 Mermaid flowcharts transcribed from the running code, with a source reference per diagram; update it when an algorithm changes.
+Root `README.md` and `requirements.txt` are intentionally empty. `tests/` and `database/` are empty placeholders. `docs/` holds `ALGORITHM_FLOWCHARTS.md` — 21 Mermaid flowcharts transcribed from the running code, with a source reference per diagram; update it when an algorithm changes.
 
 ## Commands
 
@@ -26,6 +26,8 @@ Root `README.md` and `requirements.txt` are intentionally empty. `tests/` and `d
 ./start.sh --no-lab     # never touch the lab
 ./start.sh --status     # what is answering right now
 ./start.sh --stop       # stop the API and UI; the lab is left alone
+./start.sh --doctor     # find the Docker networks taking this machine's own
+                        # network, and remove the lab's
 ```
 
 It installs what is missing (backend venv from `requirements.txt`, `node_modules`
@@ -102,7 +104,10 @@ components against the running backend rather than mocking either side; see
 source venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
-python test_training.py   # verify training pipeline (no Docker needed)
+python test_training.py        # verify training pipeline (no Docker needed)
+python test_host_networks.py   # verify the lab keeps off this machine's networks
+python lab_doctor.py           # report the Docker networks clashing with this machine
+python lab_doctor.py --fix     # ...and remove the lab's
 ```
 
 `bcrypt` and `cryptography` are new runtime requirements (account hashing and
@@ -258,6 +263,14 @@ Verified with `frontend/.harness/` (`npm run test:auth`, `test:gate`, `test:goog
 
 - **The addresses on the canvas and in the lab are the same addresses.** The canvas does not invent an IP: `POST /api/lab/plan` and `POST /api/lab/deploy` both run the same `resolve_plan`, and the designer adopts the returned plan onto its own state. Anything already set on a link is sent through and honoured; only blanks are filled. That is the whole guarantee — an IP the UI shows is the IP the routers get because it *is* the backend's allocation, not a second derivation that could disagree.
 - **Addressing is classful and the mask is derived, never typed.** A link's `address_class` (A/B/C) fixes the mask: A → `/8`, B → `/16`, C → `/24`. Each class draws from a **disjoint** block — A from first octet 10+, B from 172.16/18+, C from 192.168.x — so a Class A link can never collide with a Class C one.
+- **The lab must never take the network the machine is on, because Docker turns every bridge network into a host route.** `docker network create --subnet 10.99.0.0/24` puts `10.99.0.0/24 dev br-… proto kernel scope link` in the host's routing table, and that route has **no metric — it is metric 0**. The route a laptop's wifi gets from DHCP carries metric 600. So a lab link that claimed the machine's own network did not merely coexist with it: the kernel preferred Docker's route, the machine sent its traffic to its router through the bridge, the router stopped answering, DHCP and DNS gave up, and the desktop showed an unidentified network — a question mark on the wifi icon, with no internet on the machine running the lab. Verified live on this machine: `docker network create --subnet 192.168.31.0/24` made the bridge claim the gateway address itself (`inet 192.168.31.1/24 dev br-…`) and every real host on the wifi became 100% unreachable; removing the network restored it. The lab's Class C pool started at `192.168.0.0/24` — the default on most home routers — so this hit ordinary users, not an edge case.
+  - **The invariant is about the *pool*, not the subnet.** Docker is given `_bridge_pool(subnet, addresses)` and that pool is what becomes the route. A Class C link's pool is the whole `/24`; a Class A link's pool is a `/29` inside its `/8`. So a Class A link's own `/8` may legitimately contain a network the machine is on — what must not overlap is the `/29` Docker is actually given. The pool is computed *from the link's addresses*, so a typed address inside the machine's network is caught too: the pool grows to contain it.
+  - **`backend/host_networks.py` is where the reserved set comes from.** The machine's own networks are read from `/proc/net/route` (little/big-endian safe), and the pools Docker's other networks hold come from the daemon. When the backend runs as a container the `/proc` file describes the *container's* namespace, so the table is read from a throwaway `--network host` container instead — the same namespace the daemon creates every bridge in. The reading is cached for 60 s and `deploy()` refreshes it before planning, because the machine may have joined a hotspot since the last plan. If the table cannot be read at all, a fallback list of the LANs almost every network is on (`192.168.0.0/24`, `192.168.1.0/24`, `192.168.43.0/24`, `172.20.10.0/28`, …) is used instead: guessing wrong costs the lab a subnet, not guessing costs the machine its wifi.
+  - **A supplied address that clashes is *moved*, not refused.** The link is re-allocated within the same class and the move is reported in the plan's `notes` (surfaced in the UI), so the lab still deploys and the canvas adopts the new plan. The one thing that is refused is a deploy whose *finished* plan would still clash — `_check_plan_against_host()` runs before anything is created.
+  - **The lab's own networks are excluded from the reserved set by compose *project*, not by name**, because the lab removes its resources before every deploy, so those subnets are free again — counting them would make the plan depend on whether a lab happened to be running. Other projects' pools (the app stack) *are* included, to avoid `invalid pool request: Pool overlaps with other one on this address space`.
+  - **The app stack's own network is pinned to `198.18.0.0/15`** (RFC 2544 benchmarking range, outside Docker's automatic pool and outside every lab address class) via `APP_SUBNET`, because Docker's automatic pool starts at `172.17.0.0/16` and moves — and a pool that happened to be the machine's LAN breaks it the same way the lab's did.
+  - **`./start.sh --doctor` is the repair for a machine that is already broken.** It reports every Docker network using a network the machine is on, removes the lab's (detaching their containers first, because Docker refuses to delete a network with an endpoint attached), and for the ones it will not remove it says *how* to move them: the app stack needs `APP_SUBNET=… docker compose up -d --build`, and Docker's own default bridge needs `default-address-pools` in `/etc/docker/daemon.json`.
+- **`list(subnet.hosts())` on a Class A /8 cost 4.19 s and 1.68 GB of RSS per link.** It materialises sixteen million addresses to take two of them. `_first_hosts()` pulls the same two addresses from the generator, and a 12-router topology now plans in 0.01 s.
 - **The allocator is stateless, which is what makes deletion free.** A subnet is "taken" only by the topology currently being planned, and each class scans its candidates from the start. There is no pool to drain and nothing to release, so deleting a link or a router hands its address straight back to the next link that needs one. Verified: deleting link l5 (R11–R12, `192.168.3.0/24`) gives `192.168.3.0/24` to the next link, deleting router R12 releases both its subnets, and drawing R12 back returns both.
 - **A link with no area of its own inherits its source router's area**, and each router gets one headline `ip` (its lowest interface address) which no two routers may present at once.
 - **Deploy never restarts the lab.** Config is pushed into the running `vtysh` and read back from `show ip ospf interface`; the verification is a read-back, not an exit status, because FRR rejects some lines and still exits 0.

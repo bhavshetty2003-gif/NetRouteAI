@@ -285,6 +285,7 @@ def lab_deploy_plan(request: DeployRequest):
         "interfaces": {},
         "replaced_containers": [],
         "lab_dir": None,
+        "notes": plan.get("notes", []),
     }
 
 

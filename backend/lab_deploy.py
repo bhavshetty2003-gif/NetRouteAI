@@ -34,6 +34,8 @@ from typing import Any
 import docker
 from docker.errors import DockerException, NotFound
 
+from host_networks import conflict_for, describe, reserved_networks
+
 LAB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "labs", "current")
 COMPOSE_PROJECT = "netrouteai"
 
@@ -221,6 +223,16 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
     used_addresses: dict[str, str] = {}
     used_subnets: set[ipaddress.IPv4Network] = set()
 
+    # The networks this machine is already using, and the pools Docker's other
+    # networks hold. A link is never given one of them: Docker puts a route on
+    # the host for every bridge network it creates, so a link that took the
+    # machine's own network would put the lab's traffic in front of the
+    # machine's router and leave it with no connection at all.
+    reserved = reserved_networks(exclude_project=COMPOSE_PROJECT)
+    # Anything the plan had to change, said out loud. A link that was moved off
+    # a clashing address is reported rather than quietly rewritten.
+    notes: list[str] = []
+
     # Reserve every subnet the caller already holds BEFORE allocating anything.
     #
     # Allocation is greedy and runs in list order, so without this a link that
@@ -283,7 +295,7 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
         )
 
         subnet, source_ip, target_ip, address_class, mask = _addresses_for(
-            raw, used_subnets, used_addresses
+            raw, used_subnets, used_addresses, notes, reserved
         )
         _claim(source_ip, source, used_addresses)
         _claim(target_ip, target, used_addresses)
@@ -344,6 +356,7 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
         "routers": routers,
         "links": links,
         "areas": sorted({r["area"] for r in routers} | {l["area"] for l in links}),
+        "notes": notes,
     }
 
 
@@ -392,8 +405,8 @@ def mask_for_class(address_class: str) -> str:
     return str(ipaddress.ip_network(f"0.0.0.0/{CLASS_PREFIX[address_class]}").netmask)
 
 
-def _bridge_pool(subnet: str, addresses: list[str]) -> str:
-    """The Docker bridge pool to pin for a link, holding every `addresses` entry.
+def _bridge_network(subnet: str, addresses: list[str]) -> ipaddress.IPv4Network:
+    """The Docker bridge pool for a link, as a network.
 
     The routers must be numbered classfully -- a Class A link is 10/8, a Class B
     link is 172.16/16 -- but the *Docker bridge* must NOT be given that whole
@@ -407,10 +420,13 @@ def _bridge_pool(subnet: str, addresses: list[str]) -> str:
     The smallest prefix that still contains the bridge gateway (.1) and both
     router endpoints is pinned, so the pool cannot reach outside this link's own
     range. A /24 or longer already spans only itself and is returned unchanged.
+
+    This pool is also what becomes a route on the host, so it is the thing that
+    has to be kept away from the machine's own network -- see host_networks.py.
     """
     network = ipaddress.ip_network(subnet, strict=False)
     if network.prefixlen >= 24:
-        return str(network)
+        return network
 
     # Grow the prefix from /29 upwards until every endpoint and the .1 gateway
     # fall inside it. Taking a fixed /29 would fail the moment an endpoint was
@@ -421,8 +437,33 @@ def _bridge_pool(subnet: str, addresses: list[str]) -> str:
     for prefix in range(29, network.prefixlen - 1, -1):
         candidate = ipaddress.ip_network((int(network.network_address), prefix))
         if all(address in candidate for address in members):
-            return str(candidate)
-    return str(network)
+            return candidate
+    return network
+
+
+def _bridge_pool(subnet: str, addresses: list[str]) -> str:
+    """The Docker bridge pool to pin for a link, holding every `addresses` entry."""
+    return str(_bridge_network(subnet, addresses))
+
+
+def _first_hosts(subnet: ipaddress.IPv4Network) -> tuple[str, str]:
+    """The two addresses a link's ends are given, without listing the subnet.
+
+    `list(subnet.hosts())` on a Class A link materialises sixteen million
+    addresses: 1.7 GB of memory and four seconds for a single link, on the
+    machine that is running the lab. The generator hands out the same two
+    addresses without ever building the list.
+    """
+    hosts = subnet.hosts()
+    picked: list[ipaddress.IPv4Address] = []
+    try:
+        for _ in range(_FIRST_HOST + 1):
+            picked.append(next(hosts))
+    except StopIteration:
+        raise DeployError(
+            f"{subnet} has too few usable addresses to carry a link"
+        ) from None
+    return str(picked[_FIRST_HOST - 1]), str(picked[_FIRST_HOST])
 
 
 def _class_candidates(address_class: str) -> list[ipaddress.IPv4Network]:
@@ -438,12 +479,19 @@ def _class_candidates(address_class: str) -> list[ipaddress.IPv4Network]:
 
 
 def _addresses_for(
-    raw: dict[str, Any], used_subnets: set[ipaddress.IPv4Network], taken_by: dict
+    raw: dict[str, Any],
+    used_subnets: set[ipaddress.IPv4Network],
+    taken_by: dict,
+    notes: list[str] | None = None,
+    reserved: list[ipaddress.IPv4Network] | None = None,
 ) -> tuple[str, str, str, str, str]:
     """Resolve one link's subnet, its two addresses and its address class.
 
     A caller-supplied address always wins, so an IP the designer already shows
-    is the IP the routers get. Only the blanks are filled in.
+    is the IP the routers get. Only the blanks are filled in -- with one
+    exception: a supplied address that lands on a network this machine is
+    already using is moved, because Docker would put a competing route in
+    front of the machine's own and take its wifi down with it.
 
     Allocation scans each class's candidates from the start and takes the first
     subnet that is free, which is what makes a deleted link's subnet reusable:
@@ -454,9 +502,14 @@ def _addresses_for(
     supplied_target = str(raw.get("target_ip") or "").strip()
     supplied_subnet = str(raw.get("subnet") or "").strip()
 
+    if reserved is None:
+        reserved = reserved_networks(exclude_project=COMPOSE_PROJECT)
+
+    supplied_class = ""
     if supplied_source or supplied_target or supplied_subnet:
         subnet = _subnet_from_supplied(supplied_subnet, supplied_source, supplied_target)
         address_class = _class_of(subnet)
+        supplied_class = address_class
         if supplied_source or supplied_target:
             source_ip = _in_subnet(
                 _to_interface(supplied_source or supplied_target, address_class).ip,
@@ -468,20 +521,38 @@ def _addresses_for(
             )
         else:
             # Subnet given, addresses left blank: take the first two hosts.
-            hosts = list(subnet.hosts())
-            source_ip, target_ip = str(hosts[_FIRST_HOST - 1]), str(hosts[_FIRST_HOST])
+            source_ip, target_ip = _first_hosts(subnet)
         if source_ip == target_ip:
             raise DeployError(
                 f"Link {raw.get('source')}–{raw.get('target')}: both ends were "
                 f"given the same address {source_ip}"
             )
-        # Already reserved by the pre-pass, which is also where a genuine
-        # duplicate is reported -- re-checking here would flag this link's own
-        # subnet as a collision.
-        used_subnets.add(subnet)
-        return str(subnet), source_ip, target_ip, address_class, mask_for_class(address_class)
+        # The bridge pool is what becomes a route on the host, so this is the
+        # network that has to be kept away from the machine's own. A supplied
+        # address that lands on it is moved rather than honoured: honouring it
+        # would put the lab's traffic in front of the machine's router.
+        clash = conflict_for(_bridge_network(str(subnet), [source_ip, target_ip]), reserved)
+        if clash is None:
+            # Already reserved by the pre-pass, which is also where a genuine
+            # duplicate is reported -- re-checking here would flag this link's
+            # own subnet as a collision.
+            used_subnets.add(subnet)
+            return str(subnet), source_ip, target_ip, address_class, mask_for_class(address_class)
+        if notes is not None:
+            notes.append(
+                f"Link {raw.get('source')}–{raw.get('target')} was given "
+                f"{subnet} — {describe(clash)}. Docker puts a route for every "
+                f"bridge network it creates, so that network would have taken "
+                f"this machine's own route and left it without a connection. "
+                f"The link was given a free address instead."
+            )
 
-    address_class = resolve_class(raw.get("address_class") or raw.get("ip_class"))
+    # The class the link is allocated from. A link that supplied its own
+    # address keeps the class that address implies, so a link moved off a
+    # clashing network keeps the shape it was drawn with.
+    address_class = resolve_class(
+        raw.get("address_class") or raw.get("ip_class") or supplied_class
+    )
     for subnet in _class_candidates(address_class)[:_MAX_SUBNET_ATTEMPTS]:
         # Overlap, not just equality: a candidate /8 must not swallow a /24 some
         # other link already holds, or both links end up with the same host
@@ -490,17 +561,31 @@ def _addresses_for(
         # renumbered next to a supplied /24 in the same first octet is enough.
         if any(subnet.overlaps(taken) for taken in used_subnets):
             continue
+        source_ip, target_ip = _first_hosts(subnet)
+        # The candidate's bridge pool is skipped when it lands on a network
+        # this machine is already using. The pool, not the whole subnet, is
+        # what the host is given a route for -- a Class A link's pool is a /29,
+        # so it only has to keep away from the machine's own /29.
+        if conflict_for(_bridge_network(str(subnet), [source_ip, target_ip]), reserved):
+            continue
         used_subnets.add(subnet)
-        hosts = list(subnet.hosts())
         return (
             str(subnet),
-            str(hosts[_FIRST_HOST - 1]),
-            str(hosts[_FIRST_HOST]),
+            source_ip,
+            target_ip,
             address_class,
             mask_for_class(address_class),
         )
     raise DeployError(
         f"No free Class {address_class} subnet left for the links in this topology"
+        + (
+            f". Every Class {address_class} subnet is either already in this "
+            f"topology or in use by this machine ("
+            + ", ".join(str(network) for network in reserved[:4])
+            + ")"
+            if reserved
+            else ""
+        )
     )
 
 
@@ -1208,13 +1293,51 @@ def _free_container_names(names: list[str], client) -> list[str]:
     return removed
 
 
+def _check_plan_against_host(
+    plan: dict[str, Any], reserved: list[ipaddress.IPv4Network]
+) -> None:
+    """Refuse a plan that would put a route in front of the machine's own.
+
+    Every bridge network Docker creates becomes a route on the host, and that
+    route has metric 0 -- a better route than the metric 600 a laptop's wifi
+    gets from DHCP. So a lab link that lands on the network the machine is
+    using does not merely coexist with it: it takes the machine's own traffic
+    away from its router, and the machine is left with no connection.
+    """
+    for link in plan["links"]:
+        pool = _bridge_network(
+            str(link["subnet"]), [link["source_ip"], link["target_ip"]]
+        )
+        clash = conflict_for(pool, reserved)
+        if clash is None:
+            continue
+        raise DeployError(
+            f"Link {link['source']}–{link['target']} would use {link['subnet']} "
+            f"— {describe(clash)}. Docker adds a route to the host for every "
+            f"network it creates, so that link would have taken this machine's "
+            f"own route and left it without a connection. Give the link an "
+            f"address outside {clash} and deploy again."
+        )
+
+
 def deploy(topology: dict[str, Any], wait_seconds: float = 90.0) -> dict[str, Any]:
     """Build, start and configure the lab for `topology`.
 
     Any container already holding a planned router name is replaced, because
     container names come from router ids and two labs cannot share them.
     """
+    # The machine's networks are read afresh before the plan is resolved. The
+    # cached reading can be a minute old, and the machine may have joined a
+    # different network since -- a phone hotspot instead of the office wifi --
+    # and a plan built from the old reading would claim the new one.
+    reserved_networks(exclude_project=COMPOSE_PROJECT, refresh=True)
+
     plan = resolve_plan(topology)
+
+    # Nothing is created until the plan is known to be safe on this machine.
+    _check_plan_against_host(
+        plan, reserved_networks(exclude_project=COMPOSE_PROJECT)
+    )
 
     client = _client()
 
@@ -1280,4 +1403,5 @@ def deploy(topology: dict[str, Any], wait_seconds: float = 90.0) -> dict[str, An
         "links": plan["links"],
         "areas": plan["areas"],
         "interfaces": assignments,
+        "notes": plan.get("notes", []),
     }

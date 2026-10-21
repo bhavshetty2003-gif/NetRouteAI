@@ -21,6 +21,10 @@ backend/test_docker_output/
 generated_topologies/
 backend/docker_training/
 
+# The same scratch output, when the generators are run from the repository root
+test_topologies/
+test_docker_output/
+
 # Trained model pickles (recreated by backend/train_model.py --skip-docker)
 *.pkl
 

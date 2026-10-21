@@ -17,26 +17,27 @@ Support) and Obsidian all render these natively.
 | 2 | [Automatic address planning (canvas trigger)](#2-automatic-address-planning-canvas-trigger) | `frontend/src/App.tsx` |
 | 3 | [`resolve_plan` — the addressing algorithm](#3-resolve_plan--the-addressing-algorithm) | `backend/lab_deploy.py` |
 | 4 | [`_addresses_for` — one link's address](#4-_addresses_for--one-links-address) | `backend/lab_deploy.py` |
-| 5 | [`deploy` — build, start, configure, prove](#5-deploy--build-start-configure-prove) | `backend/lab_deploy.py` |
-| 6 | [`configure` — vtysh plus read-back](#6-configure--vtysh-plus-read-back) | `backend/lab_deploy.py` |
-| 7 | [OSPF path resolution — three sources](#7-ospf-path-resolution--three-sources) | `backend/ospf_ai_service.py` |
-| 8 | [`_rib_walk` — walking the OSPF RIB](#8-_rib_walk--walking-the-ospf-rib) | `backend/ospf_ai_service.py` |
-| 9 | [`rank_paths` — AI path scoring](#9-rank_paths--ai-path-scoring) | `backend/ai_route_service.py` |
-| 10 | [`compare_ospf_vs_ai` — the Analytics run](#10-compare_ospf_vs_ai--the-analytics-run) | `backend/ospf_ai_service.py` |
-| 11 | [`_measure_path_hops` — the noise floor](#11-_measure_path_hops--the-noise-floor) | `backend/ospf_ai_service.py` |
-| 12 | [Latency verdict — is the gap real?](#12-latency-verdict--is-the-gap-real) | `backend/ospf_ai_service.py` |
-| 13 | [Steering the data plane](#13-steering-the-data-plane) | `backend/route_steer.py` |
-| 14 | [`apply_impairment` — tc chaining](#14-apply_impairment--tc-chaining) | `backend/metrics_collector.py` |
-| 15 | [`measure_bandwidth` — real throughput](#15-measure_bandwidth--real-throughput) | `backend/metrics_collector.py` |
-| 16 | [`measure_convergence` — timed failure](#16-measure_convergence--timed-failure) | `backend/convergence.py` |
-| 17 | [OSPF area change](#17-ospf-area-change) | `backend/ospf_area.py` |
-| 18 | [Dataset collection loop](#18-dataset-collection-loop) | `backend/dataset_collector.py` |
-| 19 | [Theme + contrast audit](#19-theme--contrast-audit) | `frontend/src/utils/theme.ts`, `scripts/audit_contrast.py` |
-| 20 | [Endpoint → algorithm map](#20-endpoint--algorithm-map) | `backend/main.py` |
+| 5 | [Reading the machine's own networks](#5-reading-the-machines-own-networks) | `backend/host_networks.py` |
+| 6 | [`deploy` — build, start, configure, prove](#6-deploy--build-start-configure-prove) | `backend/lab_deploy.py` |
+| 7 | [`configure` — vtysh plus read-back](#7-configure--vtysh-plus-read-back) | `backend/lab_deploy.py` |
+| 8 | [OSPF path resolution — three sources](#8-ospf-path-resolution--three-sources) | `backend/ospf_ai_service.py` |
+| 9 | [`_rib_walk` — walking the OSPF RIB](#9-_rib_walk--walking-the-ospf-rib) | `backend/ospf_ai_service.py` |
+| 10 | [`rank_paths` — AI path scoring](#10-rank_paths--ai-path-scoring) | `backend/ai_route_service.py` |
+| 11 | [`compare_ospf_vs_ai` — the Analytics run](#11-compare_ospf_vs_ai--the-analytics-run) | `backend/ospf_ai_service.py` |
+| 12 | [`_measure_path_hops` — the noise floor](#12-_measure_path_hops--the-noise-floor) | `backend/ospf_ai_service.py` |
+| 13 | [Latency verdict — is the gap real?](#13-latency-verdict--is-the-gap-real) | `backend/ospf_ai_service.py` |
+| 14 | [Steering the data plane](#14-steering-the-data-plane) | `backend/route_steer.py` |
+| 15 | [`apply_impairment` — tc chaining](#15-apply_impairment--tc-chaining) | `backend/metrics_collector.py` |
+| 16 | [`measure_bandwidth` — real throughput](#16-measure_bandwidth--real-throughput) | `backend/metrics_collector.py` |
+| 17 | [`measure_convergence` — timed failure](#17-measure_convergence--timed-failure) | `backend/convergence.py` |
+| 18 | [OSPF area change](#18-ospf-area-change) | `backend/ospf_area.py` |
+| 19 | [Dataset collection loop](#19-dataset-collection-loop) | `backend/dataset_collector.py` |
+| 20 | [Theme + contrast audit](#20-theme--contrast-audit) | `frontend/src/utils/theme.ts`, `scripts/audit_contrast.py` |
+| 21 | [Endpoint → algorithm map](#21-endpoint--algorithm-map) | `backend/main.py` |
 
 ---
 
-## The five invariants every diagram enforces
+## The invariants every diagram enforces
 
 These are the properties the whole design exists to hold. Each is a rejection
 path somewhere in the diagrams below.
@@ -44,10 +45,11 @@ path somewhere in the diagrams below.
 | # | Invariant | Enforced by |
 |---|-----------|-------------|
 | I1 | **An IP on the canvas is the IP the routers get.** Not a re-derivation that could disagree. | `resolve_plan` runs once per plan; `adoptPlan` writes *its* output back onto the canvas. Diagram 2, 3 |
-| I2 | **Every displayed number is measured.** No constants, no placeholders. | Every measurement diagram returns `None`/`n/a` rather than a guess. Diagrams 7–18 |
+| I2 | **Every displayed number is measured.** No constants, no placeholders. | Every measurement diagram returns `None`/`n/a` rather than a guess. Diagrams 8–19 |
 | I3 | **A supplied address always beats the address class.** | `_addresses_for` checks the supplied branch *first*. Diagram 4 |
 | I4 | **Deleting a link or router releases its address.** | The allocator is stateless — a subnet is taken only by the topology being planned, and each class rescans from the start. Diagram 3 |
-| I5 | **The label never exceeds the evidence.** | Noise-floor gate before declaring a winner; `"n/a"` otherwise. Diagram 12 |
+| I5 | **The label never exceeds the evidence.** | Noise-floor gate before declaring a winner; `"n/a"` otherwise. Diagram 13 |
+| I6 | **The lab never takes the machine's own network.** | The allocator skips any candidate whose bridge pool overlaps a network the machine is on. Diagrams 4, 5, 6 |
 
 ---
 
@@ -72,7 +74,7 @@ flowchart TD
     end
 
     subgraph DEPLOYMENT["Deployment — the drawn topology becomes the lab"]
-        DEPLOY_REQ["POST /api/lab/deploy"] --> DP["deploy — see diagram 5"]
+        DEPLOY_REQ["POST /api/lab/deploy"] --> DP["deploy — see diagram 6"]
     end
 
     subgraph ANALYTICS_VIEW["Analytics view — scoped to canvas ∩ lab"]
@@ -82,7 +84,7 @@ flowchart TD
     end
 
     SRC --> LIVE_REQ["POST /api/analytics/live"]
-    LIVE_REQ --> CMP["compare_ospf_vs_ai — see diagram 10"]
+    LIVE_REQ --> CMP["compare_ospf_vs_ai — see diagram 11"]
     CMP --> TABLE["Comparison table, traced path,<br/>end-to-end figures, provenance panel"]
 
     style PLANNING fill:#e8f4f8,stroke:#0d6e85
@@ -140,12 +142,13 @@ whose address was released stops the canvas claiming to hold it (I4).
 
 ## 3. `resolve_plan` — the addressing algorithm
 
-`backend/lab_deploy.py:171`. This is the single allocator. It backs both
+`backend/lab_deploy.py:173`. This is the single allocator. It backs both
 `POST /api/lab/plan` and `POST /api/lab/deploy`.
 
 ```mermaid
 flowchart TD
-    IN["topology: routers[], links[]"] --> RLOOP{"for each router"}
+    IN["topology: routers[], links[]"] --> RESERVED["reserved = reserved_networks(<br/>exclude_project = 'netrouteai')<br/><br/>the networks this machine is on,<br/>plus the pools Docker's other<br/>networks hold — diagram 5"]
+    RESERVED --> RLOOP{"for each router"}
     RLOOP --> RID{"has an id?"}
     RID -- no --> E1["DeployError: 'A router has no id'"]
     RID -- yes --> RTYPE{"type == router?"}
@@ -209,7 +212,7 @@ flowchart TD
         PC -- ok --> PD["routers[].ip = primary"]
     end
 
-    PD --> RET["return {routers, links, areas}<br/>areas = union of router areas and link areas"]
+    PD --> RET["return {routers, links, areas, notes}<br/>areas = union of router areas and link areas<br/>notes = anything that had to be moved"]
 
     style PASS1 fill:#e8f4f8,stroke:#0d6e85
     style PASS2 fill:#fdf0e6,stroke:#b5651d
@@ -253,7 +256,7 @@ and drawing the link again returns it.
 
 ## 4. `_addresses_for` — one link's address
 
-`backend/lab_deploy.py:440`
+`backend/lab_deploy.py:482`
 
 ```mermaid
 flowchart TD
@@ -265,19 +268,26 @@ flowchart TD
     IPSUP -- yes --> INNET{"each supplied IP is a<br/>usable host address?<br/>in subnet, not network<br/>or broadcast"}
     INNET -- no --> E1["DeployError: '10.0.0.0 is not a<br/>usable host address on subnet X'"]
     INNET -- yes --> BOTH
-    IPSUP -- "no — subnet only" --> FIRSTHOST["take the first two hosts<br/>hosts[1] and hosts[2]"]
+    IPSUP -- "no — subnet only" --> FIRSTHOST["take the first two hosts<br/>the 2nd and the 3rd, from a generator<br/>(never list a /8: 1.7 GB)"]
     FIRSTHOST --> BOTH{"source_ip == target_ip?"}
     BOTH -- yes --> E2["DeployError: both ends given<br/>the same address"]
     BOTH -- no --> MASK["mask = dotted mask for the class<br/>/8→255.0.0.0  /16→255.255.0.0  /24→255.255.255.0"]
-    MASK --> RET1["return supplied address,<br/>with the class *derived* from it"]
+    MASK --> POOLOK{"_bridge_network(subnet, addrs)<br/>overlaps anything in `reserved`?"}
+    POOLOK -- no --> RET1["return supplied address,<br/>with the class *derived* from it"]
+    POOLOK -- "yes — it would take the<br/>machine's own network" --> NOTE["note: 'Link X–Y was given Z,<br/>and Z is the network this machine<br/>is on (wlan0)'"]
+    NOTE --> REALLOC
 
     SUP -- "NO — blank link" --> RESOLVE["address_class = resolve_class(<br/>address_class ?? ip_class)<br/>default 'C'"]
 
     RESOLVE --> CAND{"_class_candidates(class),<br/>first 256, in order:<br/>A: 10.0.0.0/8, 11.0.0.0/8 …<br/>B: 172.16.0.0/16, 172.18.0.0/16 …<br/>C: 192.168.0.0/24 …"}
     CAND --> FREE{"overlaps() any<br/>already-used subnet?"}
     FREE -- yes --> NEXT
-    FREE -- "no — first free one" --> TAKE["claim it<br/>source_ip = hosts[1]<br/>target_ip = hosts[2]"]
+    FREE -- "no" --> POOLCHK{"_bridge_network(subnet, addrs)<br/>overlaps anything in `reserved`?"}
+    POOLCHK -- "yes — the machine is<br/>on this network" --> NEXT
+    POOLCHK -- no --> TAKE["claim it<br/>source_ip = the 2nd host<br/>target_ip = the 3rd"]
     TAKE --> RET2["return fresh address +<br/>the class the user chose"]
+
+    REALLOC --> RESOLVE
 
     NEXT{"exhausted 256<br/>candidates?"}
     NEXT -- no --> CAND
@@ -285,6 +295,36 @@ flowchart TD
 
     style SUP fill:#e8f4f8,stroke:#0d6e85
 ```
+
+### The pool, not the subnet, is what must keep off
+
+Docker is given the **bridge pool** (`_bridge_pool`), and the pool is what becomes a
+route on the host:
+
+```
+192.168.0.0/24 dev br-094535c9c08b proto kernel scope link src 192.168.0.1
+```
+
+That route carries **no metric — it is metric 0** — while the route a laptop's wifi
+gets from DHCP carries metric 600. So a pool that overlaps the network the machine
+is on does not sit next to it: the kernel prefers Docker's route, the machine sends
+its traffic to its router through the bridge, the router stops answering, DHCP and
+DNS give up, and the desktop shows an unidentified network — a question mark on the
+wifi icon.
+
+The two are not the same thing, and the distinction is the whole fix:
+
+| | a Class C link | a Class A link |
+|---|---|---|
+| the link's own subnet | `192.168.3.0/24` | `10.0.0.0/8` |
+| the pool Docker is given | `192.168.3.0/24` | `10.0.0.0/29` |
+| what becomes a route on the host | the whole `/24` | the `/29` only |
+
+So a Class A link's own `/8` legitimately contains networks the machine is on, and
+that is fine: the `/29` Docker is actually given does not overlap them. The check is
+against the **pool**, and the pool is computed from the link's addresses — which is
+why a *typed* address inside the machine's network is caught too, because the pool
+grows to contain it.
 
 ### The class pools are disjoint
 
@@ -300,9 +340,11 @@ B pool because it is Docker's default bridge range.
 
 ### I3 — supplied address beats class
 
-The `SUP` branch is checked **first** and returns immediately. This is the whole
-guarantee in I1: an address already on the canvas survives planning untouched, and
-because the lab is configured from the plan, the routers get it.
+The `SUP` branch is checked **first**, and it returns immediately — unless the
+address it found would take the machine's own network. Then it falls through to
+the allocator, keeps the *class* the address implied, and records a note saying so.
+The one exception to "a supplied address always wins" is the one that would leave
+the machine without a connection; I6.
 
 The corollary, which was a real defect until fixed: **changing the class on an
 already-addressed link did nothing at all.** The held subnet was honoured and the
@@ -310,20 +352,99 @@ chosen class silently discarded, with the backend reporting the old class back.
 The fix is in the UI, not the allocator — `CablePropertiesPanel` now clears
 `subnet`/`subnetMask`/`sourceIp`/`targetIp` alongside the class, which puts the
 link back into the unaddressed set of diagram 2 so it is genuinely renumbered.
-
 ---
 
-## 5. `deploy` — build, start, configure, prove
+## 5. Reading the machine's own networks
 
-`backend/lab_deploy.py:1211`
+`backend/host_networks.py:258`. This is where the reserved set comes from: the
+networks the machine is already on, and the pools Docker's other networks hold.
 
 ```mermaid
 flowchart TD
-    TOPO["drawn topology"] --> RP["resolve_plan — diagram 3"]
-    RP -->|DeployError| FAIL(["HTTP 400 with the reason"])
-    RP --> PLAN["plan: routers, links, areas"]
+    START["host_networks(refresh)"] --> TTL{"cached reading<br/>younger than 60s?"}
+    TTL -- yes --> USE["return the cached reading"]
+    TTL -- no --> INCONT{"in_container()?<br>/.dockerenv or a container<br/>marker in /proc/1/cgroup"}
+    INCONT -- "no — running on the machine" --> READ["read /proc/net/route<br/>the machine's own table"]
+    INCONT -- "yes — running in a container" --> PROBE["start a helper container<br/>with --network host<br/>and read /proc/net/route<br/>inside it"]
+    PROBE --> NOIMG{"an image to run?<br/>own image, then frrouting/frr,<br/>alpine, busybox"}
+    NOIMG -- no --> EMPTY["no reading"]
+    NOIMG -- yes --> READ
 
-    PLAN --> CLIENT["docker client"]
+    READ --> PARSE["_parse_route_table<br/>hex in host byte order → IPv4Network"]
+    PARSE --> SKIP{"the default route?<br/>loopback?<br/>a Docker interface?<br/>br-, docker, veth,<br/>virbr, cni, flannel, kube"}
+    SKIP -- "yes — not the machine's own network" --> DROP["skip it"]
+    SKIP -- no --> KEEP["keep (iface, network)"]
+    DROP --> MORE
+    KEEP --> MORE{"more routes?"}
+    MORE -- yes --> PARSE
+    MORE -- no --> EMPTYQ{"anything kept?"}
+    EMPTYQ -- "no — the table could not be read" --> FALLBACK["use _FALLBACK_LANS<br/>the LANs almost every network is on"]
+    EMPTYQ -- yes --> RESULT["the machine's networks"]
+    FALLBACK --> RESULT
+
+    RESULT --> POOLS["docker_pools(exclude_project='netrouteai')<br/>every network's IPAM subnets,<br/>minus the lab's own"]
+    POOLS --> RESERVED["reserved_networks()<br/>the machine's networks<br/>+ the pools Docker holds"]
+    RESERVED --> CONFLICT["conflict_for(pool, reserved)<br/>does this pool overlap<br/>any of them?"]
+
+    style START fill:#e8f4f8,stroke:#0d6e85
+    style RESERVED fill:#fdf0e6,stroke:#b5651d
+```
+
+### Why the reading is per-machine, not a fixed list
+
+A fixed list of "networks to avoid" cannot work: the laptop is on the office
+router's `192.168.31.0/24` at work, on the home router's `192.168.0.0/24` at
+home, and on `192.168.43.0/24` when it is tethered to an Android hotspot. The
+allocator has to be told what the machine is on *now*.
+
+`/proc/net/route` is the kernel's routing table for the namespace the calling
+process is in. When the backend runs on the machine (`./start.sh`) that is the
+machine's table. When it runs as a container (`docker compose up`) it describes
+the *container's* namespace instead — so the table is read from a throwaway
+container sharing the host's namespace (`--network host`), which is the same
+namespace the Docker daemon creates every bridge in, and therefore the namespace
+the conflicting route would land in.
+
+The reading is cached for 60 seconds, because it costs a container start and the
+machine's networks change only when it joins another one. `deploy()` refreshes it
+before planning, so a machine that has just joined a hotspot is not planned
+against the office's network.
+
+### Docker's own interfaces are left out
+
+`br-`, `docker`, `veth`, `virbr`, `cni`, `flannel` and `kube` are skipped. The
+machine is not *on* those networks in the sense that matters; the daemon is, and
+its pools are counted separately by `docker_pools()`.
+
+The lab's own networks are left out of that count too — by compose *project*,
+not by name — because the lab removes its resources before every deploy, so
+those subnets are free again. Counting them would make the plan depend on
+whether a lab happened to be running.
+
+### The fallback list
+
+If the routing table cannot be read at all — no `/proc`, no daemon, no image to
+probe with — the module falls back to the LANs almost every network is on:
+`192.168.0.0/24`, `192.168.1.0/24`, `192.168.10.0/24`, `192.168.31.0/24`,
+`192.168.42.0/24`, `192.168.43.0/24`, `172.20.10.0/28` and `10.0.0.0/24`.
+Guessing wrong costs the lab a subnet it could have used; not guessing costs the
+machine its wifi.
+
+---
+
+## 6. `deploy` — build, start, configure, prove
+
+`backend/lab_deploy.py:1325`
+
+```mermaid
+flowchart TD
+    TOPO["drawn topology"] --> REFRESH["reserved_networks(refresh=True)<br/>re-read the machine's networks<br/>— it may have joined a<br/>hotspot since the last plan"]
+    REFRESH --> RP["resolve_plan — diagram 3"]
+    RP -->|DeployError| FAIL(["HTTP 400 with the reason"])
+    RP --> PLAN["plan: routers, links, areas, notes"]
+    PLAN --> GUARD{"_check_plan_against_host(plan)<br/>does any link's bridge pool<br/>overlap a reserved network?"}
+    GUARD -- "yes — nothing has been created yet" --> FAIL2(["HTTP 400: 'Link R1–R2 would use<br/>192.168.0.0/24, and that is the<br/>network this machine is on'"])
+    GUARD -- no --> CLIENT["docker client"]
     CLIENT --> PURGE["_remove_lab_resources(client)<br/>remove EVERY container and network<br/>labelled com.docker.compose.project=netrouteai<br/>a redeploy must start from nothing:<br/>compose reuses a network by NAME<br/>and keeps its OLD subnet"]
     PURGE --> WRITE["write_files(plan)<br/>docker-compose.yml<br/>per-router frr.conf<br/>networks n00, n01 …"]
     WRITE --> FREE["_free_container_names<br/>replace any container already<br/>holding a planned router name<br/>two labs cannot share names"]
@@ -335,18 +456,27 @@ flowchart TD
 
     WAIT --> WAITQ{"all running?"}
     WAITQ -- no --> E2["DeployError: containers did not all<br/>reach 'running'"]
-    WAITQ -- yes --> CONF["configure(plan, client)<br/>— diagram 6"]
+    WAITQ -- yes --> CONF["configure(plan, client)<br/>— diagram 7"]
     CONF -->|DeployError| E3["DeployError: the generated OSPF<br/>configuration did not match<br/>the running lab: reasons"]
     CONF --> SAVE["save_plan(plan, assignments)<br/>backend/labs/current/plan.json<br/>gitignored — it is output"]
     SAVE --> SETTLE["sleep 12s — OSPF needs to form<br/>adjacencies before anything<br/>is worth measuring"]
-    SETTLE --> OK(["200: routers, links, areas,<br/>interface assignments"])
+    SETTLE --> OK(["200: routers, links, areas,<br/>interface assignments, notes"])
 
     ERR["POST /api/lab/deploy/teardown"] --> DOWN["compose down --volumes --remove-orphans"]
     DOWN --> PURGE2["_remove_lab_resources(client)<br/>compose down only knows the services<br/>in the file on disk — orphans from an<br/>older topology survive it"]
 
     style CONF fill:#fdf0e6,stroke:#b5651d
     style PURGE fill:#fdf0e6,stroke:#b5651d
+    style GUARD fill:#fdf0e6,stroke:#b5651d
 ```
+
+**Nothing is created until the plan is known to be safe on this machine.** The
+guard runs after `resolve_plan` and before the Docker client is even asked for
+anything, so a plan that would take the machine's own network fails with a reason
+instead of a machine with no connection. The reading is refreshed first, because
+the machine may have joined a different network since the last plan — the office
+router at work, a phone hotspot on the train — and a plan built from the stale
+reading would claim the new one.
 
 **Deploy never restarts the lab.** The containers are created with a minimal
 `frr.conf` and the real configuration is pushed into the *running* `vtysh`.
@@ -373,9 +503,9 @@ name filter `"netrouteai"` is a *substring* match and would also match
 
 ---
 
-## 6. `configure` — vtysh plus read-back
+## 7. `configure` — vtysh plus read-back
 
-`backend/lab_deploy.py:853`
+`backend/lab_deploy.py:940`
 
 ```mermaid
 flowchart TD
@@ -460,7 +590,7 @@ holding interfaces in more than one area, rather than asserted.
 
 ---
 
-## 7. OSPF path resolution — two live sources, or a raised refusal
+## 8. OSPF path resolution — two live sources, or a raised refusal
 
 `backend/ospf_ai_service.py:672` (`compare_ospf_vs_ai`). Which path is "the OSPF
 path" is the single most consequential decision on the Analytics page.
@@ -468,7 +598,7 @@ path" is the single most consequential decision on the Analytics page.
 ```mermaid
 flowchart TD
     SRC["source, destination"] --> E2E["0. measure_path end-to-end FIRST:<br/>ping + traceroute, 12 ICMP requests<br/>(the refusal below quotes this measurement)"]
-    SRC --> RIB["1. ospf_rib_path<br/>each router's 'show ip route ospf',<br/>longest-prefix walk over graph G — diagram 8"]
+    SRC --> RIB["1. ospf_rib_path<br/>each router's 'show ip route ospf',<br/>longest-prefix walk over graph G — diagram 9"]
     SRC --> TRACE["2. real_ospf_path<br/>traceroute: what is ACTUALLY<br/>being forwarded right now"]
 
     RIB --> RIBOK{"RIB walk succeeded AND<br/>ends at the destination?"}
@@ -477,7 +607,7 @@ flowchart TD
     TOK -- yes --> PICK2["OSPF PATH = traceroute<br/>basis: 'Live forwarding path'"]
     TOK -- no --> RAISE["RAISE LabUnavailable (HTTP 503):<br/>the pair is not measurable. The message is<br/>_diagnose(end_to_end), e.g. 'Path breaks after<br/>3 hop(s); the remaining hops did not<br/>answer ICMP.' — what was OBSERVED, not modelled"]
 
-    PICK1 --> MEAS["_measure_path_hops — diagram 11"]
+    PICK1 --> MEAS["_measure_path_hops — diagram 12"]
     PICK2 --> MEAS
 
     NOTE["traceroute is kept SEPARATELY as path_taken:<br/>it is the ground truth for what is<br/>actually being forwarded"] -.-> TRACE
@@ -536,7 +666,7 @@ flowchart TD
 
 ---
 
-## 8. `_rib_walk` — walking the OSPF RIB
+## 9. `_rib_walk` — walking the OSPF RIB
 
 `backend/ospf_ai_service.py:812`
 
@@ -594,13 +724,13 @@ cheaper path can lose.
 
 ---
 
-## 9. `rank_paths` — AI path scoring
+## 10. `rank_paths` — AI path scoring
 
 `backend/ai_route_service.py:164`
 
 ```mermaid
 flowchart TD
-    G["live graph G<br/>diagram 7"] --> ALL["nx.all_simple_paths(G, source, destination, cutoff 10)"]
+    G["live graph G<br/>diagram 8"] --> ALL["nx.all_simple_paths(G, source, destination, cutoff 10)"]
     ALL --> NOPATH{"NoPath, or empty?"}
     NOPATH -- yes --> E1["return {error: no path found}"]
     NOPATH -- no --> CAP{"more than 400 candidate paths?"}
@@ -645,7 +775,7 @@ path is measured — probing every candidate would mean a ping burst per path.
 
 ---
 
-## 10. `compare_ospf_vs_ai` — the Analytics run
+## 11. `compare_ospf_vs_ai` — the Analytics run
 
 `backend/ospf_ai_service.py:471` · `POST /api/analytics/live`
 
@@ -661,9 +791,9 @@ flowchart TD
     METHOD -- no --> E3["LabUnavailable: unknown method"]
     METHOD -- yes --> G["G = lab_graph(lab)"]
 
-    G --> OSPFPATH["resolve OSPF path — diagram 7<br/>RIB → traceroute → raise with diagnosis"]
-    OSPFPATH --> OSPFM["_measure_path_hops(ospf) — diagram 11"]
-    OSPFM --> AIPATH["rank_paths(G, s, d) — diagram 9"]
+    G --> OSPFPATH["resolve OSPF path — diagram 8<br/>RIB → traceroute → raise with diagnosis"]
+    OSPFPATH --> OSPFM["_measure_path_hops(ospf) — diagram 12"]
+    OSPFM --> AIPATH["rank_paths(G, s, d) — diagram 10"]
     AIPATH --> AIM["_measure_path_hops(ai)"]
 
     AIPATH --> E2E
@@ -684,10 +814,10 @@ flowchart TD
     COMPLETE --> VERDICT["_matches_method / _forwarding_method:<br/>which methods does the traced path<br/>AGREE with, and which single method<br/>does it correspond to?"]
 
     VERDICT --> ACTIVE["_active_method — report in_effect honestly:<br/>'the routers are forwarding this path'<br/>vs 'selected, but the routers are still<br/>forwarding OSPF; apply to install a route'"]
-    ACTIVE --> BUILD["_build_comparison — diagram 12"]
+    ACTIVE --> BUILD["_build_comparison — diagram 13"]
     BUILD --> DIAG{"_diagnose — explain WHY<br/>if unreachable"}
     DIAG --> CONV{"convergence requested<br/>and a transit link exists?"}
-    CONV -- yes --> CONVM["measure_convergence — diagram 16"]
+    CONV -- yes --> CONVM["measure_convergence — diagram 17"]
     CONV -- no --> OUT
     CONVM --> OUT(["200: ospf, ai, comparison rows,<br/>path_taken, end_to_end,<br/>ai_ranking, model, confidence,<br/>active, convergence"])
 
@@ -711,7 +841,7 @@ claiming a *match* would be worse. The page shows the gaps.
 
 ---
 
-## 11. `_measure_path_hops` — the noise floor
+## 12. `_measure_path_hops` — the noise floor
 
 `backend/ospf_ai_service.py:352`. This is where latency becomes trustworthy.
 
@@ -757,11 +887,11 @@ R1 → R9, six runs:  0.304  0.412  0.352  0.389  0.331  0.367  ms
 On `R12 → R9` the OSPF-minus-AI difference fell **inside the measured spread in 5
 of 6 runs** — yet the table printed a winner and a precise percentage. The numbers
 were honest; the conclusion drawn from them was not. Carrying the margin beside
-every figure lets the comparison decide in diagram 12.
+every figure lets the comparison decide in diagram 13.
 
 ---
 
-## 12. Latency verdict — is the gap real?
+## 13. Latency verdict — is the gap real?
 
 `backend/ospf_ai_service.py:1186` · `_build_comparison`. Invariant **I5**.
 
@@ -808,12 +938,12 @@ says what it says.
 **Min Link Speed** reads `10000 Mbps` on every path because all veths report the
 same synthetic 10 Gbps. It can never discriminate between two paths in this lab, so
 that row cannot decide anything. The real capacity figure is measured throughput
-(diagram 15), which reads ~6.58 Mbps on a clean link. `link_speed_mbps` returns
+(diagram 16), which reads ~6.58 Mbps on a clean link. `link_speed_mbps` returns
 `None` on `-1`/0 rather than substituting a plausible default.
 
 ---
 
-## 13. Steering the data plane
+## 14. Steering the data plane
 
 `backend/route_steer.py` · `POST /api/lab/route`
 
@@ -884,7 +1014,7 @@ steering to AI left it in effect.
 
 ---
 
-## 14. `apply_impairment` — tc chaining
+## 15. `apply_impairment` — tc chaining
 
 `backend/metrics_collector.py:701` · `POST /api/lab/impair`
 
@@ -925,7 +1055,7 @@ Queue length and qdisc drops are legitimately `0` on a clean link.
 
 ---
 
-## 15. `measure_bandwidth` — real throughput
+## 16. `measure_bandwidth` — real throughput
 
 `backend/metrics_collector.py:585` · `POST /api/lab/bandwidth`
 
@@ -972,7 +1102,7 @@ Verified responsive to shaping: R12→R5 reads 6.576 Mbps, 3.411 Mbps under
 
 ---
 
-## 16. `measure_convergence` — timed failure
+## 17. `measure_convergence` — timed failure
 
 `backend/convergence.py:30` · `POST /api/lab/convergence`
 
@@ -1022,7 +1152,7 @@ working correctly.
 
 ---
 
-## 17. OSPF area change
+## 18. OSPF area change
 
 `backend/ospf_area.py` · `GET/POST /api/lab/ospf/area`. The rules live in the
 backend, not the UI, so they hold for any caller.
@@ -1079,7 +1209,7 @@ has no dry-run. Neighbours take one dead-timer interval (40 s) to re-form.
 
 ---
 
-## 18. Dataset collection loop
+## 19. Dataset collection loop
 
 `backend/dataset_collector.py` · `POST /api/dataset/collect`
 
@@ -1149,7 +1279,7 @@ profile never reaches and a clean link never approaches.
 
 ---
 
-## 19. Theme + contrast audit
+## 20. Theme + contrast audit
 
 `frontend/src/utils/theme.ts`, `frontend/index.html`, `scripts/audit_contrast.py`
 
@@ -1197,32 +1327,32 @@ The CLI terminal stays dark in **both** themes and has its own theme-invariant
 
 ---
 
-## 20. Endpoint → algorithm map
+## 21. Endpoint → algorithm map
 
 | Method | Path | Handler | Algorithm |
 |--------|------|---------|-----------|
 | POST | `/api/lab/plan` | `resolve_plan` | **Diagram 3 + 4** — no Docker touched |
-| POST | `/api/lab/deploy` | `deploy` → `resolve_plan` → `configure` | **Diagrams 5 + 6** |
+| POST | `/api/lab/deploy` | `deploy` → `resolve_plan` → `configure` | **Diagrams 6 + 7** |
 | GET | `/api/lab/deploy` | `load_plan` / `deployed_lab_running` | drift check vs the canvas |
 | POST | `/api/lab/deploy/teardown` | `teardown` | `compose down --volumes` + networks + `labs/current` removed |
 | GET | `/api/lab/status` | `discover_lab` | dynamically discovered devices, links, cost histogram |
 | POST | `/api/lab/ping` | `probe_ping` | literal-IP ping from one router's container |
-| POST | `/api/lab/measure` | `measure_path` | **Diagram 10** E2E block |
-| POST | `/api/lab/bandwidth` | `measure_bandwidth` | **Diagram 15** |
-| POST | `/api/lab/impair` | `apply_impairment` / `clear_impairment` | **Diagram 14** |
+| POST | `/api/lab/measure` | `measure_path` | **Diagram 11** E2E block |
+| POST | `/api/lab/bandwidth` | `measure_bandwidth` | **Diagram 16** |
+| POST | `/api/lab/impair` | `apply_impairment` / `clear_impairment` | **Diagram 15** |
 | POST | `/api/lab/link` | `set_link_state` | `ip link set dev … down/up` |
 | POST/GET | `/api/lab/traffic` | `traffic.py` | detached in-container ping loops |
 | GET | `/api/lab/ospf/areas` | `area_inventory` | `show ip ospf interface` + derived ABR status |
-| POST | `/api/lab/ospf/area` | `preview_move` / `apply_move` | **Diagram 17** |
-| POST | `/api/lab/convergence` | `measure_convergence` | **Diagram 16** |
+| POST | `/api/lab/ospf/area` | `preview_move` / `apply_move` | **Diagram 18** |
+| POST | `/api/lab/convergence` | `measure_convergence` | **Diagram 17** |
 | GET | `/api/lab/reachability` | parallel sweep, full 171-pair matrix | ground truth for which pairs can work |
 | GET | `/api/lab/metrics` | `collect_all` | interface + resource counters |
-| POST | `/api/analytics/live` | `compare_ospf_vs_ai` | **Diagrams 7, 8, 10, 11, 12** |
-| POST | `/api/lab/route` | `steer_plan` / `apply_steer` / `revert_steer` | **Diagram 13** |
+| POST | `/api/analytics/live` | `compare_ospf_vs_ai` | **Diagrams 8, 9, 11, 12, 13** |
+| POST | `/api/lab/route` | `steer_plan` / `apply_steer` / `revert_steer` | **Diagram 14** |
 | GET | `/api/lab/routes` | `static_routes` | `show ip route static`, exact-revert capable |
-| POST | `/api/dataset/collect` | `collect` | **Diagram 18** |
+| POST | `/api/dataset/collect` | `collect` | **Diagram 19** |
 | GET | `/api/dataset` | row counts | measured/synthetic split, class balance |
-| — | `scripts/audit_contrast.py` | — | **Diagram 19** |
+| — | `scripts/audit_contrast.py` | — | **Diagram 20** |
 
 ---
 

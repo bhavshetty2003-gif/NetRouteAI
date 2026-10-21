@@ -458,6 +458,17 @@ class B → `/16`, class C → `/24`. Each class draws from a disjoint block
 be handed the same subnet. `172.17.0.0/16` is deliberately excluded from the B pool
 because it is Docker's default bridge range.
 
+One more range is excluded, and it is not a constant: **the networks the machine
+running the lab is on**. Docker turns every bridge network it creates into a route
+on the host with metric 0, while the route a laptop's wifi gets from DHCP carries
+metric 600 — so a lab link that claimed the machine's own LAN took the machine's
+traffic away from its router and left the desktop showing an unidentified network
+(a question mark on the wifi icon). The allocator therefore reads the machine's
+routing table and skips any candidate whose *bridge pool* overlaps it. On a machine
+on `192.168.31.0/24` the Class C candidates start at `192.168.0.0/24` and skip
+`192.168.31.0/24`; on a machine on `192.168.0.0/24` they start at
+`192.168.1.0/24` instead. The table below is one machine's plan, not a fixed one.
+
 **Listing 3.1** — the allocator's three guarantees
 
 ```python
@@ -476,9 +487,11 @@ for raw in links_in:
 for subnet in _class_candidates(address_class)[:_MAX_SUBNET_ATTEMPTS]:  # 256
     if any(subnet.overlaps(taken) for taken in used_subnets):
         continue
+    source_ip, target_ip = _first_hosts(subnet)          # a generator, never a list
+    if conflict_for(_bridge_network(str(subnet), [source_ip, target_ip]), reserved):
+        continue                                         # this machine is on it
     used_subnets.add(subnet)
-    hosts = list(subnet.hosts())
-    return str(subnet), str(hosts[1]), str(hosts[2]), address_class, mask_for_class(address_class)
+    return str(subnet), source_ip, target_ip, address_class, mask_for_class(address_class)
 ```
 
 The per-class candidate pools are disjoint by construction, so the only way an
@@ -622,6 +635,11 @@ Note also that the allocator is stateless and order-independent: l4 and l6 hold
 `192.168.2.0/24` and `192.168.4.0/24` rather than consecutive blocks, because l4 was
 drawn before l6 in one session and after it in another. Deleting either link returns
 its subnet to the next link that needs one.
+
+The subnets above are the ones **this** machine's plan produced. They are not
+constants: the allocator skips any candidate whose bridge pool overlaps a network
+the machine is on, so the same drawing allocates `192.168.1.0/24` for l1 on a
+machine whose LAN is `192.168.0.0/24`.
 
 ### 4.1.2 Measurement findings
 

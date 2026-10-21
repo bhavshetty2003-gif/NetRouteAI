@@ -7,6 +7,8 @@
 #   ./start.sh --no-lab     never touch the lab
 #   ./start.sh --status     what is running right now
 #   ./start.sh --stop       stop the API and the UI
+#   ./start.sh --doctor     find the Docker networks that are taking this
+#                           machine's own network, and remove the lab's
 #   ./start.sh --help
 #
 # It installs what is missing (backend venv, node_modules) rather than asking
@@ -14,6 +16,13 @@
 # tells you where the logs are. Nothing here touches a lab that is already
 # running: lab containers are started only when none of them are running, and
 # the app itself owns reconfiguring them (Deploy in the UI).
+#
+# --doctor is the repair for a machine whose wifi stopped working while the
+# lab was up: Docker gives every bridge network it creates a route on the
+# host, and a route for the network the laptop was already on takes the
+# laptop's own traffic away from its router. The desktop then shows an
+# unidentified network -- a question mark on the wifi icon. The doctor finds
+# the network doing it and removes it.
 #
 set -euo pipefail
 
@@ -45,7 +54,9 @@ warn() { printf '  %swarn%s %s\n' "$C_WARN" "$C_OFF" "$*" >&2; }
 die()  { printf '  %sFAIL%s %s\n' "$C_BAD" "$C_OFF" "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # The header block, which is also the help text. Keep the line range in
+  # step with the comment at the top of this file.
+  sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # --------------------------------------------------------------------------- #
@@ -307,6 +318,33 @@ do_stop() {
   note "  (cd backend/labs/current && docker compose -p $LAB_PROJECT down)"
 }
 
+# Find the Docker networks that are using a network this machine is already
+# on, and remove the lab's.
+#
+# Every bridge network Docker creates becomes a route on the host, and that
+# route has metric 0 — a better route than the metric 600 a laptop's wifi
+# gets from DHCP. So a network whose subnet is the one the machine is on
+# takes the machine's traffic away from its router: the router stops
+# answering, DHCP and DNS give up, and the desktop shows an unidentified
+# network. Removing the network removes the route, and the machine's own route
+# is back.
+do_doctor() {
+  printf '%sNetwork doctor%s\n' "$C_DIM" "$C_OFF"
+  local python_bin="python3"
+  if [ -x "$VENV/bin/python" ]; then python_bin="$VENV/bin/python"; fi
+  if ! command -v "$python_bin" >/dev/null 2>&1; then
+    die "python3 is needed to run the network doctor"
+  fi
+  # The doctor only needs the `docker` package, so a machine that has not run
+  # ./start.sh yet is still checked; it says so plainly if it cannot reach
+  # Docker rather than failing silently.
+  if ! "$python_bin" -c "import docker" >/dev/null 2>&1; then
+    note "installing the backend's python dependencies (first run)"
+    ensure_backend_deps
+  fi
+  "$python_bin" "$ROOT/backend/lab_doctor.py" --fix
+}
+
 do_start() {
   check_prereqs
   ensure_backend_deps
@@ -366,6 +404,7 @@ while [ $# -gt 0 ]; do
     --no-lab)  LAB_MODE="never" ;;
     --stop)    ACTION="stop" ;;
     --status)  ACTION="status" ;;
+    --doctor)  ACTION="doctor" ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown option: $1 (try ./start.sh --help)" ;;
   esac
@@ -376,4 +415,5 @@ case "$ACTION" in
   start)  do_start ;;
   stop)   do_stop ;;
   status) do_status ;;
+  doctor) do_doctor ;;
 esac

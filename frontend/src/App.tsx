@@ -796,8 +796,14 @@ export default function App() {
     setIsPlanning(true);
     setLabMessage(null);
     try {
-      adoptPlan(await previewAddresses(buildDeployPayload()), cables);
-      setLabMessage({ kind: 'ok', text: 'Addresses allocated. Deploy to put them on the routers.' });
+      const result = await previewAddresses(buildDeployPayload());
+      adoptPlan(result, cables);
+      setLabMessage({
+        kind: 'ok',
+        text: result.notes?.length
+          ? result.notes.join(' ')
+          : 'Addresses allocated. Deploy to put them on the routers.',
+      });
     } catch (err) {
       setLabMessage({ kind: 'bad', text: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -878,7 +884,9 @@ export default function App() {
         const result = await previewAddresses(payload);
         if (run !== planRunRef.current) return;
         adoptPlan(result, cables);
-        setLabMessage(null);
+        setLabMessage(
+          result.notes?.length ? { kind: 'ok', text: result.notes.join(' ') } : null
+        );
         // The guard is cleared only when the plan covered every link that was
         // asked about. If it did not, the guard stays where it is, which is
         // what stops the planner from asking the same question for ever.
@@ -907,7 +915,9 @@ export default function App() {
       adoptPlan(result, cables);
       setLabMessage({
         kind: 'ok',
-        text: `Lab built from this canvas: ${result.routers.length} routers, ${result.links.length} links, areas ${result.areas.join(', ')}. Every address, cost and area was read back from the routers before this returned.`,
+        text:
+          `Lab built from this canvas: ${result.routers.length} routers, ${result.links.length} links, areas ${result.areas.join(', ')}. Every address, cost and area was read back from the routers before this returned.` +
+          (result.notes?.length ? ` ${result.notes.join(' ')}` : ''),
       });
       setDeployState({
         source: 'designer',
