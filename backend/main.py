@@ -32,8 +32,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import auth_db
@@ -107,6 +108,9 @@ logger = logging.getLogger("netroute.dataset")
 # detail only reaches the browser leaves nothing to diagnose server-side --
 # that is exactly how a refused plan once stayed invisible here.
 deploy_logger = logging.getLogger("netroute.deploy")
+# Unexpected failures are logged with their traceback, so the detail the
+# browser is shown is not the only copy of what went wrong.
+error_logger = logging.getLogger("netroute.error")
 
 init_db()
 auth_db.init_auth_db()
@@ -1111,16 +1115,49 @@ _DEFAULT_ORIGINS = (
     "http://localhost:3000,http://127.0.0.1:3000"
 )
 
+# The origins this server answers to. Kept as a list of its own because the
+# error handler below has to make the same decision the CORS middleware does.
+_ALLOWED_ORIGINS = [
+    origin.strip()
+    # `or`, not a dict default: compose always sets the variable, and an
+    # explicitly empty one must fall back rather than clear the list.
+    for origin in (os.environ.get("CORS_ORIGINS") or _DEFAULT_ORIGINS).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        origin.strip()
-        # `or`, not a dict default: compose always sets the variable, and an
-        # explicitly empty one must fall back rather than clear the list.
-        for origin in (os.environ.get("CORS_ORIGINS") or _DEFAULT_ORIGINS).split(",")
-        if origin.strip()
-    ],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    """Answer an unexpected failure with a body the browser can actually read.
+
+    FastAPI routes an unhandled exception to `ServerErrorMiddleware`, which
+    sits *outside* the CORS middleware. A 500 produced there carries no
+    `Access-Control-Allow-Origin`, and a browser that cannot read a
+    cross-origin response rejects the request outright -- so the failure was
+    reported to the user as "Failed to fetch" and the actual cause was thrown
+    away. A deploy that hit a stray `NameError` looked exactly like a
+    machine that had lost the network.
+
+    Echoing the origin back makes the response readable, and only for an
+    origin this server already allows, so the error path does not become a way
+    to read a response from somewhere that is not allowed.
+    """
+    error_logger.exception("unhandled error on %s %s", request.method, request.url.path)
+    headers = {}
+    origin = request.headers.get("origin")
+    if origin and origin in _ALLOWED_ORIGINS:
+        headers["access-control-allow-origin"] = origin
+        headers["access-control-allow-credentials"] = "true"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}"},
+        headers=headers,
+    )

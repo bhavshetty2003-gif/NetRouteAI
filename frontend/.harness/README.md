@@ -1,6 +1,6 @@
 # Verification harnesses
 
-These are not a unit-test suite. They are five jsdom scripts that mount the real
+These are not a unit-test suite. They are six jsdom scripts that mount the real
 components and drive them against the **running** backend on port 8000, because
 the things worth checking here — that a session actually gates the workspace,
 that a canvas belongs to the account that drew it, that an email cannot be
@@ -22,7 +22,11 @@ npm run test:gate        # the whole App: signed out vs signed in
 npm run test:google-ui   # the Google button's visibility rule
 npm run test:home        # the landing page: no backend reads, no invented figures
 npm run test:canvas      # per-account canvas: blank, restored, never shared
+npm run test:analytics   # the analytics drift gate, both directions
 ```
+
+`test:analytics` builds a real Docker/FRR lab, so it needs Docker and takes a
+couple of minutes. Every other script is seconds.
 
 The Google *token signature* is checked server-side and cannot be exercised from
 jsdom, so that half lives with the backend:
@@ -45,18 +49,34 @@ cd ../backend && venv/bin/python /tmp/opencode/google_verify.py
 - The canvas was stored under one global key, so a second account on the same
   browser was handed the first one's network. `test:canvas` registers two
   accounts in one jsdom and asserts each gets its own key.
+- A redeploy reused the previous topology's Docker networks, so the new routers
+  got addresses that were not on the network they were attached to and the
+  deploy failed — leaving the *old* lab running and the analytics page
+  reporting "deployed but no longer drawn: R11, R12" for a canvas that had
+  never been deployed. `test:analytics` was written for it and now pins both
+  directions.
 
-## Two patterns these rely on
+## Three patterns these rely on
 
 **A conditional has two branches; assert both.** `test:home` clicks the AI/OSPF
 preview toggle before reading the DOM. Reading only the default branch is how a
 label check passes against text that is not on the page.
+
+**A gate has two directions.** `test:analytics` deploys the canvas and asserts
+the page does *not* block, then deploys a *different* topology and asserts it
+*does*. A gate that never blocks passes the first assertion just as well, so
+the second is what gives the first its meaning.
 
 **"Empty" and "absent" are different states.** `test:canvas` asserts
 `hasSavedTopology(id) === true` *and* `loadTopology(id).devices.length === 0`
 after the user clears their workspace. Asserting only the second passes just as
 well for a store that never saved anything — which is the bug that resurrects a
 topology the user deleted.
+
+**A fresh mount per assertion.** The analytics page fetches the deployed plan
+in an effect that runs once on mount, so re-rendering it with new props keeps
+the *previous* mount's plan. The harness unmounts and remounts for each
+scenario; reusing one root tests stale state and passes for the wrong reason.
 
 ## Why the tamper test looks the way it does
 

@@ -37,6 +37,12 @@ from docker.errors import DockerException, NotFound
 LAB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "labs", "current")
 COMPOSE_PROJECT = "netrouteai"
 
+# The label Docker Compose puts on every container and network it creates.
+# Selecting the lab's resources by this label rather than by name is what
+# keeps the lab's teardown away from the application stack, whose own project
+# is `netrouteai-app` -- a name match on "netrouteai" would match it too.
+COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+
 # Routers are named after the designer's ids so the existing live discovery
 # (`^r\d+$` in lab_topology) keeps working unchanged and so a canvas id and a
 # container name never drift apart.
@@ -83,6 +89,12 @@ _FIRST_HOST = 2
 _SETTLE_SECONDS = 8
 _CONVERGE_SECONDS = 12
 
+# How long to let FRR breathe between pushing the configuration and reading it
+# back. A daemon that `watchfrr` restarts while the push is in flight comes
+# back a moment later with the configuration it re-read from frr.conf, so an
+# immediate read-back sees the gap rather than the result.
+_PUSH_SETTLE_SECONDS = 3
+
 DAEMONS = """zebra=yes
 bgpd=no
 ospfd=yes
@@ -124,13 +136,26 @@ class DeployError(Exception):
 
 
 def _compose(*args: str, cwd: str = LAB_DIR) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["docker", "compose", "-p", COMPOSE_PROJECT, *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    try:
+        return subprocess.run(
+            ["docker", "compose", "-p", COMPOSE_PROJECT, *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # A hung `docker compose` is a refusal with a reason, not a crash: the
+        # reason is what the user needs, and an unhandled exception here used
+        # to reach the browser as an unreadable "Failed to fetch".
+        raise DeployError(
+            f"docker compose {' '.join(args)} did not finish within "
+            f"{int(exc.timeout or 0)}s"
+        ) from exc
+    except FileNotFoundError as exc:
+        raise DeployError(
+            "The `docker` command was not found, so no lab can be built."
+        ) from exc
 
 
 def _client() -> docker.DockerClient:
@@ -707,13 +732,25 @@ def _read_interfaces(client, plan: dict[str, Any], deadline: float) -> dict[str,
     return readings
 
 
-def _write_configs(plan: dict[str, Any], readings: dict[str, dict[str, str]]) -> None:
-    """Write every frr.conf from a measured iface -> ip reading."""
+def _write_configs(plan: dict[str, Any], readings: dict[str, dict[str, str]]) -> bool:
+    """Write every frr.conf from a measured iface -> ip reading.
+
+    Returns whether any file actually changed.
+
+    The "only write when it changes" rule is the whole point. FRR's `watchfrr`
+    reacts to the config file's mtime by restarting the daemons, and a restart
+    discards whatever `vtysh` was given a moment earlier. Rewriting a file
+    whose content is already correct still bumps its mtime, so an unchanged
+    rewrite restarts the daemons for nothing -- and a restart that lands
+    between the push and the read-back is what made verification fail
+    intermittently, with a different router missing its interfaces each time.
+    """
     by_address = {
         ip: link
         for link in plan["links"]
         for ip in (link["source_ip"], link["target_ip"])
     }
+    changed = False
 
     for router in plan["routers"]:
         container = router["container"]
@@ -743,8 +780,17 @@ def _write_configs(plan: dict[str, Any], readings: dict[str, dict[str, str]]) ->
             + body
             + f"router ospf\n ospf router-id {router['router_id']}\nexit\n!\n"
         )
-        with open(os.path.join(LAB_DIR, container, "frr.conf"), "w") as handle:
-            handle.write(config)
+        path = os.path.join(LAB_DIR, container, "frr.conf")
+        try:
+            with open(path) as handle:
+                unchanged = handle.read() == config
+        except OSError:
+            unchanged = False
+        if not unchanged:
+            with open(path, "w") as handle:
+                handle.write(config)
+            changed = True
+    return changed
 
 
 def _area_to_int(text: str) -> int:
@@ -805,7 +851,7 @@ def _read_ospf_interfaces(client, container: str) -> dict[str, tuple[str, str]]:
 
 
 def configure(
-    plan: dict[str, Any], client, max_attempts: int = 5
+    plan: dict[str, Any], client, max_attempts: int = 6
 ) -> dict[str, dict[str, str]]:
     """Put the planned OSPF configuration into the running routers and prove it.
 
@@ -826,23 +872,25 @@ def configure(
     than a silently wrong lab.
     """
     readings = _read_interfaces(client, plan, time.time() + 60)
-    by_address = {
-        ip: link
-        for link in plan["links"]
-        for ip in (link["source_ip"], link["target_ip"])
-    }
+
+    # The bind-mounted frr.conf is written from the interface map actually
+    # observed, before anything is pushed. FRR's `watchfrr` restarts a daemon
+    # during startup and the daemon then re-reads that file, discarding
+    # whatever vtysh was given a moment earlier -- which is how a router
+    # ended up running with `router ospf` and no interfaces at all. With the
+    # file already correct, a reload and a push converge on the same result.
+    #
+    # It is written once, here, and not again per attempt: a rewrite bumps the
+    # file's mtime even when the content is identical, and every bump is
+    # another daemon restart, and every restart is another chance to discard
+    # the configuration that was just pushed. The interface map does not
+    # change between attempts -- the lab is never restarted -- so there is
+    # nothing to re-write.
+    _write_configs(plan, readings)
 
     problems: list[str] = []
     for attempt in range(1, max_attempts + 1):
-        readings = _read_interfaces(client, plan, time.time() + 60)
         problems = []
-        # Write the bind-mounted frr.conf from the interface map actually
-        # observed, before pushing anything. FRR's `watchfrr` restarts a daemon
-        # during startup and the daemon then re-reads that file, discarding
-        # whatever vtysh was given a moment earlier -- which is how a router
-        # ended up running with `router ospf` and no interfaces at all. With the
-        # file already correct, a reload and a push converge on the same result.
-        _write_configs(plan, readings)
         for router in plan["routers"]:
             container = router["container"]
             observed = readings[router["id"]]
@@ -885,6 +933,11 @@ def configure(
             if code != 0 or "%" in output.replace("% ", "", 1):
                 problems.append(f"{container}: vtysh rejected the configuration: {output.strip()[:200]}")
 
+        # A daemon that was restarting when the push arrived comes back with
+        # whatever it re-read from frr.conf, so the router is correct again a
+        # moment later. Reading back immediately would see the gap.
+        time.sleep(_PUSH_SETTLE_SECONDS)
+
         applied = {
             router["id"]: _read_ospf_interfaces(client, router["container"])
             for router in plan["routers"]
@@ -892,7 +945,6 @@ def configure(
         _verify_applied(plan, readings, applied, problems)
 
         if not problems:
-            _write_configs(plan, readings)
             return readings
 
         if attempt == max_attempts:
@@ -986,11 +1038,14 @@ def teardown() -> dict[str, Any]:
         if result.returncode != 0:
             return {"removed": False, "detail": detail or "docker compose down failed"}
 
-    # `compose down` removes the containers and their networks for this project,
-    # but a network left behind by an earlier topology (or one whose container
-    # was removed by hand) keeps its subnet and makes the next deploy fail with
-    # "invalid pool request: Pool overlaps". Remove any that survived.
-    _remove_project_networks()
+    # `compose down` only knows the services in the compose file that is on
+    # disk, so containers from an older topology survive it as orphans, and
+    # their networks survive with them -- holding their old subnets. Remove
+    # every container and network this project ever created.
+    try:
+        _remove_lab_resources(_client())
+    except DeployError:
+        pass
 
     if had_files:
         shutil.rmtree(LAB_DIR, ignore_errors=True)
@@ -1003,24 +1058,50 @@ def teardown() -> dict[str, Any]:
     }
 
 
-def _remove_project_networks() -> list[str]:
-    """Delete any network belonging to this compose project.
+def _remove_lab_resources(client) -> list[str]:
+    """Remove every container and network belonging to this lab's project.
 
-    Best-effort: a network still attached to a running container is skipped
-    rather than raising, because the caller has already asked compose to stop
-    everything and an error here would hide that teardown succeeded.
+    Selection is by the compose project *label*, not by name, and that
+    distinction is load-bearing. The name filter `"netrouteai"` is a
+    substring match, and the application stack's own project is called
+    `netrouteai-app` -- so a name match also picks up `netrouteai-app_default`
+    and tears down the network the running UI depends on. The label
+    `com.docker.compose.project` is exact: it is `netrouteai` for the lab and
+    `netrouteai-app` for the stack, and they never collide.
+
+    Containers are removed before networks because Docker refuses to delete a
+    network that still has an endpoint attached, and a container that survived
+    `compose down` (an orphan from an older topology) is exactly such an
+    endpoint.
+
+    Best-effort by design: a resource that cannot be removed is skipped
+    rather than raising, because the caller has already asked for the lab to
+    go and an error here would hide that the teardown otherwise succeeded.
     """
     removed: list[str] = []
+    label = f"{COMPOSE_PROJECT_LABEL}={COMPOSE_PROJECT}"
+
     try:
-        client = _client()
-        for network in client.networks.list(filters={"name": COMPOSE_PROJECT}):
-            try:
-                network.remove()
-                removed.append(network.name)
-            except DockerException:
-                continue
+        containers = client.containers.list(all=True, filters={"label": label})
     except DockerException:
-        pass
+        containers = []
+    for container in containers:
+        try:
+            container.remove(force=True)
+            removed.append(container.name)
+        except DockerException:
+            continue
+
+    try:
+        networks = client.networks.list(filters={"label": label})
+    except DockerException:
+        networks = []
+    for network in networks:
+        try:
+            network.remove()
+            removed.append(network.name)
+        except DockerException:
+            continue
     return removed
 
 
@@ -1135,9 +1216,26 @@ def deploy(topology: dict[str, Any], wait_seconds: float = 90.0) -> dict[str, An
     """
     plan = resolve_plan(topology)
 
+    client = _client()
+
+    # A redeploy has to start from nothing. Docker Compose identifies a
+    # resource by project + *name*, so the compose file for a new topology
+    # reuses the networks the previous topology left behind -- and a reused
+    # network keeps its old subnet, because Compose does not reconfigure the
+    # IPAM of a network that already exists. The routers are then configured
+    # with the new plan's addresses, which are not on the network they are
+    # attached to, and verification fails with "link R5-R6 (192.168.4.3) is
+    # not in OSPF". Docker can also refuse outright with "invalid pool
+    # request: Pool overlaps with other one on this address space" when the
+    # new pool lands inside a survivor's.
+    #
+    # Removing first also means a failed deploy leaves *no* lab rather than a
+    # lab built from a different topology, which is what the analytics page
+    # would otherwise be measuring.
+    _remove_lab_resources(client)
+
     write_files(plan)
 
-    client = _client()
     replaced = _free_container_names([r["container"] for r in plan["routers"]], client)
 
     up = _compose("up", "-d")

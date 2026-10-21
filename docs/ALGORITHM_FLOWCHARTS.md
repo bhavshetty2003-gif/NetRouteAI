@@ -140,7 +140,7 @@ whose address was released stops the canvas claiming to hold it (I4).
 
 ## 3. `resolve_plan` — the addressing algorithm
 
-`backend/lab_deploy.py:146`. This is the single allocator. It backs both
+`backend/lab_deploy.py:171`. This is the single allocator. It backs both
 `POST /api/lab/plan` and `POST /api/lab/deploy`.
 
 ```mermaid
@@ -253,7 +253,7 @@ and drawing the link again returns it.
 
 ## 4. `_addresses_for` — one link's address
 
-`backend/lab_deploy.py:382`
+`backend/lab_deploy.py:440`
 
 ```mermaid
 flowchart TD
@@ -315,7 +315,7 @@ link back into the unaddressed set of diagram 2 so it is genuinely renumbered.
 
 ## 5. `deploy` — build, start, configure, prove
 
-`backend/lab_deploy.py:1002`
+`backend/lab_deploy.py:1211`
 
 ```mermaid
 flowchart TD
@@ -323,9 +323,10 @@ flowchart TD
     RP -->|DeployError| FAIL(["HTTP 400 with the reason"])
     RP --> PLAN["plan: routers, links, areas"]
 
-    PLAN --> WRITE["write_files(plan)<br/>docker-compose.yml<br/>per-router frr.conf<br/>networks n00, n01 …"]
-    WRITE --> CLIENT["docker client"]
-    CLIENT --> FREE["_free_container_names<br/>replace any container already<br/>holding a planned router name<br/>two labs cannot share names"]
+    PLAN --> CLIENT["docker client"]
+    CLIENT --> PURGE["_remove_lab_resources(client)<br/>remove EVERY container and network<br/>labelled com.docker.compose.project=netrouteai<br/>a redeploy must start from nothing:<br/>compose reuses a network by NAME<br/>and keeps its OLD subnet"]
+    PURGE --> WRITE["write_files(plan)<br/>docker-compose.yml<br/>per-router frr.conf<br/>networks n00, n01 …"]
+    WRITE --> FREE["_free_container_names<br/>replace any container already<br/>holding a planned router name<br/>two labs cannot share names"]
     FREE --> UP["docker compose up -d"]
 
     UP --> UPC{"exit code 0?"}
@@ -341,8 +342,10 @@ flowchart TD
     SETTLE --> OK(["200: routers, links, areas,<br/>interface assignments"])
 
     ERR["POST /api/lab/deploy/teardown"] --> DOWN["compose down --volumes --remove-orphans"]
+    DOWN --> PURGE2["_remove_lab_resources(client)<br/>compose down only knows the services<br/>in the file on disk — orphans from an<br/>older topology survive it"]
 
     style CONF fill:#fdf0e6,stroke:#b5651d
+    style PURGE fill:#fdf0e6,stroke:#b5651d
 ```
 
 **Deploy never restarts the lab.** The containers are created with a minimal
@@ -353,20 +356,35 @@ lands each area and cost on the **wrong interface**, and FRR accepts it without
 complaint. The lab then looks healthy while OSPF silently runs on the wrong links.
 Chasing the mapping across restarts does not converge; never restarting does.
 
+**A redeploy starts from nothing.** Docker Compose identifies a resource by
+*project + name*, so the compose file for a new topology reuses the previous
+topology's networks — and a reused network keeps its old subnet, because
+Compose does not reconfigure the IPAM of a network that already exists. The
+routers are then configured with the new plan's addresses, which are not on the
+network they are attached to, and verification fails with
+`link R5–R6 (192.168.4.3) is not in OSPF`. Docker can also refuse outright
+with `invalid pool request: Pool overlaps with other one on this address space`.
+`_remove_lab_resources` therefore runs *before* the new files are written.
+
+**Resources are selected by label, not by name.** `com.docker.compose.project`
+is `netrouteai` for the lab and `netrouteai-app` for the application stack. The
+name filter `"netrouteai"` is a *substring* match and would also match
+`netrouteai-app_default` — the network the running UI depends on.
+
 ---
 
 ## 6. `configure` — vtysh plus read-back
 
-`backend/lab_deploy.py:743`
+`backend/lab_deploy.py:853`
 
 ```mermaid
 flowchart TD
-    START(["configure(plan, client)"]) --> ATTEMPT{"attempt 1..3"}
-
-    ATTEMPT --> READ["_read_interfaces<br/>read the live iface → ip mapping<br/>from every container<br/>(60s deadline)"]
+    START(["configure(plan, client)"]) --> READ["_read_interfaces<br/>read the live iface → ip mapping<br/>from every container<br/>(60s deadline)"]
     READ --> BYIP["invert the mapping:<br/>address → interface"]
+    BYIP --> WRITE["_write_configs(plan, readings)<br/>ONE write, before the loop:<br/>write only if the content CHANGED<br/>watchfrr restarts the daemons on an<br/>mtime bump, and a restart discards<br/>the configuration just pushed"]
 
-    BYIP --> RLOOP{"for each router"}
+    WRITE --> ATTEMPT{"attempt 1..6"}
+    ATTEMPT --> RLOOP{"for each router"}
     RLOOP --> EXIST["_read_ospf_interfaces — ONE call per router<br/>replaces one vtysh call per link"]
     EXIST --> CMDS["start the command list:<br/>router ospf<br/>ospf router-id x.x.x.x"]
 
@@ -389,20 +407,40 @@ flowchart TD
     PROB2 --> RLOOP2
     RLOOP2 --> RLOOP
 
-    RLOOP --> APPLY["RE-READ 'show ip ospf interface'<br/>on every router"]
+    RLOOP --> PUSHWAIT["sleep 3s<br/>a daemon that was restarting when the push<br/>arrived comes back a moment later with<br/>the config it re-read from frr.conf"]
+    PUSHWAIT --> APPLY["RE-READ 'show ip ospf interface'<br/>on every router"]
     APPLY --> VERIFY["_verify_applied — compare what the routers<br/>REPORT against what was ASKED:<br/>interface in OSPF? area matches?<br/>cost matches? no duplicate addresses?"]
 
     VERIFY --> PROBOK{"any problems?"}
-    PROBOK -- "no" --> PERSIST["_write_configs(plan, readings)<br/>persist frr.conf per router"]
-    PERSIST --> DONE(["return the verified<br/>interface assignments"])
+    PROBOK -- "no" --> DONE(["return the verified<br/>interface assignments"])
 
-    PROBOK -- yes --> RETRY{"attempt &lt; 3?"}
-    RETRY -- yes --> SETTLE["sleep 6s<br/>OSPF needs a moment"] --> ATTEMPT
+    PROBOK -- yes --> RETRY{"attempt &lt; 6?"}
+    RETRY -- yes --> SETTLE["sleep 8s<br/>OSPF needs a moment"] --> ATTEMPT
     RETRY -- no --> RAISE(["DeployError listing every problem"])
 
     style VERIFY fill:#eef7ee,stroke:#3d7a3d
     style NOAREA fill:#ffe8e8,stroke:#b33
+    style WRITE fill:#fdf0e6,stroke:#b5651d
+    style PUSHWAIT fill:#fdf0e6,stroke:#b5651d
 ```
+
+### Why the config file is written once, and only when it changed
+
+FRR's `watchfrr` reacts to the config file's **mtime** by restarting the
+daemons, and a restart discards whatever `vtysh` was given a moment earlier.
+Rewriting a file whose content is already correct still bumps its mtime, so an
+unchanged rewrite restarts the daemons for nothing — and a restart that lands
+between the push and the read-back is what made verification fail
+*intermittently*, with a different router missing its interfaces each time.
+
+So `_write_configs` writes only when the content actually changes, and
+`configure` writes it **once**, before the retry loop. The interface map does
+not change between attempts — the lab is never restarted — so there is nothing
+to re-write.
+
+`os.replace()` is **not** available as an atomic write here: the config is a
+*file* bind mount, so renaming over it would swap the inode and leave the
+container reading the old file forever.
 
 ### Why verification is a read-back and not an exit status
 

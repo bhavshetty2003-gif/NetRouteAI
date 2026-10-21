@@ -1,5 +1,36 @@
 import { API_BASE } from "./config";
 
+/**
+ * `fetch` that explains a *network* failure instead of saying "Failed to fetch".
+ *
+ * A rejected fetch is not an HTTP error: the request never got an answer, so
+ * there is no status code and no `detail` to show. The browser's own message
+ * for it is "Failed to fetch", which tells the reader nothing they can act
+ * on -- it does not say which address was unreachable, and it does not say
+ * that the backend is probably not running. `describeFailure` covers the other
+ * case (an answer that arrived with an error status); this covers the one it
+ * cannot.
+ *
+ * The port hint is only true in the dev layout, where the browser does talk
+ * to :8000 directly. In a deployed build `API_BASE` is "" -- same origin,
+ * through nginx -- so there is no port 8000 for the visitor to check, and
+ * naming one sends them looking at their own machine's port 8000.
+ */
+async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err) {
+    const where = input || "this origin";
+    const hint = API_BASE
+      ? " Is the backend running on port 8000?"
+      : " The server did not answer.";
+    throw new Error(
+      `Could not reach the API at ${where}.${hint} ` +
+        `(${err instanceof Error ? err.message : String(err)})`
+    );
+  }
+}
+
 export interface Topology {
   devices: Array<{
     id: string;
@@ -85,7 +116,7 @@ export interface AnalyticsResult {
 }
 
 export async function createTopology(topology: Topology): Promise<{ topology_id: string; status: string }> {
-  const response = await fetch(`${API_BASE}/api/topology/create`, {
+  const response = await apiFetch(`${API_BASE}/api/topology/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topology }),
@@ -99,7 +130,7 @@ export async function runDijkstra(
   source: string,
   destination: string
 ): Promise<RoutingResult> {
-  const response = await fetch(`${API_BASE}/api/routing/dijkstra`, {
+  const response = await apiFetch(`${API_BASE}/api/routing/dijkstra`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topology_id: topologyId, source, destination }),
@@ -113,7 +144,7 @@ export async function runRandomForest(
   source: string,
   destination: string
 ): Promise<RoutingResult> {
-  const response = await fetch(`${API_BASE}/api/routing/random-forest`, {
+  const response = await apiFetch(`${API_BASE}/api/routing/random-forest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topology_id: topologyId, source, destination }),
@@ -130,7 +161,7 @@ export async function simulatePackets(
   packetSize: number = 1024,
   algorithm: string = "dijkstra"
 ): Promise<SimulationResult> {
-  const response = await fetch(`${API_BASE}/api/simulation/send-packets`, {
+  const response = await apiFetch(`${API_BASE}/api/simulation/send-packets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -151,7 +182,7 @@ export async function compareAlgorithms(
   source: string,
   destination: string
 ): Promise<AnalyticsResult> {
-  const response = await fetch(`${API_BASE}/api/analytics/compare`, {
+  const response = await apiFetch(`${API_BASE}/api/analytics/compare`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topology_id: topologyId, source, destination }),
@@ -190,7 +221,7 @@ export interface AiRouteRecommendation {
 export async function uploadTopology(
   topology: Topology
 ): Promise<{ topology_id: string; status: string; validation: any }> {
-  const response = await fetch(`${API_BASE}/upload-topology`, {
+  const response = await apiFetch(`${API_BASE}/upload-topology`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topology }),
@@ -204,7 +235,7 @@ export async function getAiRouteRecommendation(
   source: string,
   destination: string
 ): Promise<AiRouteRecommendation> {
-  const response = await fetch(`${API_BASE}/api/routing/recommend`, {
+  const response = await apiFetch(`${API_BASE}/api/routing/recommend`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topology_id: topologyId, source, destination }),
@@ -443,7 +474,7 @@ async function describeFailure(response: Response, action: string): Promise<stri
 }
 
 export async function getLabStatus(): Promise<LabStatus> {
-  const response = await fetch(`${API_BASE}/api/lab/status`);
+  const response = await apiFetch(`${API_BASE}/api/lab/status`);
   if (!response.ok) throw new Error(await describeFailure(response, "Lab status"));
   return response.json();
 }
@@ -534,7 +565,7 @@ export async function deployLab(
   topology: DeployTopologyPayload,
   waitSeconds = 90
 ): Promise<DeployResult> {
-  const response = await fetch(`${API_BASE}/api/lab/deploy`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/deploy`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topology, wait_seconds: waitSeconds }),
@@ -545,13 +576,13 @@ export async function deployLab(
 
 /** Which lab is currently measurable, and the address plan it was built from. */
 export async function getDeployState(): Promise<DeployState> {
-  const response = await fetch(`${API_BASE}/api/lab/deploy`);
+  const response = await apiFetch(`${API_BASE}/api/lab/deploy`);
   if (!response.ok) throw new Error(await describeFailure(response, "Lab state"));
   return response.json();
 }
 
 export async function teardownDeployedLab(): Promise<{ removed: boolean; detail: string }> {
-  const response = await fetch(`${API_BASE}/api/lab/deploy/teardown`, { method: "POST" });
+  const response = await apiFetch(`${API_BASE}/api/lab/deploy/teardown`, { method: "POST" });
   if (!response.ok) throw new Error(await describeFailure(response, "Teardown"));
   return response.json();
 }
@@ -561,7 +592,7 @@ export async function teardownDeployedLab(): Promise<{ removed: boolean; detail:
 export async function previewAddresses(
   topology: DeployTopologyPayload
 ): Promise<DeployResult> {
-  const response = await fetch(`${API_BASE}/api/lab/plan`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/plan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topology }),
@@ -579,7 +610,7 @@ export async function getLiveAnalytics(
   method: RoutingMethod = "ospf",
   packetCount = 12
 ): Promise<LiveAnalytics> {
-  const response = await fetch(`${API_BASE}/api/analytics/live`, {
+  const response = await apiFetch(`${API_BASE}/api/analytics/live`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -613,7 +644,7 @@ export async function setRoutingMethod(
   commands?: string[];
   removed?: string[];
 }> {
-  const response = await fetch(`${API_BASE}/api/lab/route`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/route`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source, destination, method, apply }),
@@ -636,7 +667,7 @@ export async function measureLabPath(
   command: string;
   raw: { ping: { command: string; samples: number[] } };
 }> {
-  const response = await fetch(`${API_BASE}/api/lab/measure`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/measure`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source, destination, count }),
@@ -646,7 +677,7 @@ export async function measureLabPath(
 }
 
 export async function getDatasetStats(): Promise<DatasetStats> {
-  const response = await fetch(`${API_BASE}/api/dataset`);
+  const response = await apiFetch(`${API_BASE}/api/dataset`);
   if (!response.ok) throw new Error(await describeFailure(response, "Dataset stats"));
   return response.json();
 }
@@ -703,7 +734,7 @@ export interface LabSweep {
 }
 
 export async function getLabSweep(includeOspf = true): Promise<LabSweep> {
-  const response = await fetch(`${API_BASE}/api/lab/metrics?include_ospf=${includeOspf}`);
+  const response = await apiFetch(`${API_BASE}/api/lab/metrics?include_ospf=${includeOspf}`);
   if (!response.ok) throw new Error(await describeFailure(response, "Lab sweep"));
   return response.json();
 }
@@ -711,7 +742,7 @@ export async function getLabSweep(includeOspf = true): Promise<LabSweep> {
 export async function collectDataset(
   maxPairs = 66
 ): Promise<{ status: string; pairs_requested: number; message: string }> {
-  const response = await fetch(`${API_BASE}/api/dataset/collect`, {
+  const response = await apiFetch(`${API_BASE}/api/dataset/collect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ max_pairs: maxPairs }),
@@ -729,7 +760,7 @@ export async function applyImpairment(params: {
   bandwidth?: number;
   clear?: boolean;
 }): Promise<{ applied?: boolean; cleared?: boolean; errors: string[] }> {
-  const response = await fetch(`${API_BASE}/api/lab/impair`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/impair`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ interface: "eth0", ...params }),
@@ -743,7 +774,7 @@ export async function setLinkState(
   iface: string,
   up: boolean
 ): Promise<{ ok: boolean; state: string; output: string }> {
-  const response = await fetch(`${API_BASE}/api/lab/link`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/link`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ device, interface: iface, up }),
@@ -802,7 +833,7 @@ export async function pingLabDevice(
   target: string,
   count = 5
 ): Promise<LabPingResult> {
-  const response = await fetch(`${API_BASE}/api/lab/ping`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/ping`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ device, target, count }),
@@ -822,7 +853,7 @@ export async function measureBandwidth(
   destination: string,
   duration = 2
 ): Promise<BandwidthResult> {
-  const response = await fetch(`${API_BASE}/api/lab/bandwidth`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/bandwidth`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source, destination, duration }),
@@ -868,7 +899,7 @@ export interface OspfAreaInventory {
 
 /** Every OSPF interface's area in the live lab, read from `show ip ospf interface`. */
 export async function getOspfAreas(): Promise<OspfAreaInventory> {
-  const response = await fetch(`${API_BASE}/api/lab/ospf/areas`);
+  const response = await apiFetch(`${API_BASE}/api/lab/ospf/areas`);
   if (!response.ok) throw new Error(await describeFailure(response, "OSPF areas"));
   return response.json();
 }
@@ -912,7 +943,7 @@ export async function setOspfArea(
   area: string,
   preview: boolean
 ): Promise<OspfAreaPreview | OspfAreaApplied> {
-  const response = await fetch(`${API_BASE}/api/lab/ospf/area`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/ospf/area`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ device, interface: iface, area, preview }),
@@ -949,7 +980,7 @@ export async function setTraffic(
   generator?: TrafficGenerator;
   message: string;
 }> {
-  const response = await fetch(`${API_BASE}/api/lab/traffic`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/traffic`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ device, running, interval }),
@@ -960,7 +991,7 @@ export async function setTraffic(
 
 /** Which devices are currently generating traffic. */
 export async function getTraffic(): Promise<{ generators: TrafficGenerator[] }> {
-  const response = await fetch(`${API_BASE}/api/lab/traffic`);
+  const response = await apiFetch(`${API_BASE}/api/lab/traffic`);
   if (!response.ok) throw new Error(await describeFailure(response, "Traffic generator"));
   return response.json();
 }
@@ -994,7 +1025,7 @@ export async function measureConvergence(
   link: { container: string; interface: string },
   timeout = 60
 ): Promise<ConvergenceResult> {
-  const response = await fetch(`${API_BASE}/api/lab/convergence`, {
+  const response = await apiFetch(`${API_BASE}/api/lab/convergence`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source, destination, ...link, timeout }),
@@ -1017,7 +1048,7 @@ export interface LabReachability {
 }
 
 export async function getLabReachability(maxProbes = 400): Promise<LabReachability> {
-  const response = await fetch(`${API_BASE}/api/lab/reachability?max_probes=${maxProbes}`);
+  const response = await apiFetch(`${API_BASE}/api/lab/reachability?max_probes=${maxProbes}`);
   if (!response.ok) throw new Error(await describeFailure(response, "Reachability"));
   return response.json();
 }

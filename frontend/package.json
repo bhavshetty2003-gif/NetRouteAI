@@ -13,7 +13,8 @@
     "test:gate": "tsx .harness/gate.mts",
     "test:google-ui": "tsx .harness/googleui.mts",
     "test:home": "tsx .harness/homepage.mts",
-    "test:canvas": "tsx .harness/canvas.mts"
+    "test:canvas": "tsx .harness/canvas.mts",
+    "test:analytics": "tsx .harness/analytics.mts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
