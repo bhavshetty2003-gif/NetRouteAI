@@ -24,7 +24,6 @@ import {
 import {
   BandwidthResult,
   ConvergenceResult,
-  DatasetStats,
   DeployState,
   LabStatus,
   LiveAnalytics,
@@ -37,7 +36,6 @@ import {
   TrafficGenerator,
   applyImpairment,
   collectDataset,
-  getDatasetStats,
   getDeployState,
   getLabStatus,
   getLabReachability,
@@ -131,7 +129,6 @@ export const AnalyticsView: React.FC<{
   const [labError, setLabError] = useState<string | null>(null);
   const [deployState, setDeployState] = useState<DeployState | null>(null);
   const [deployChecked, setDeployChecked] = useState(false);
-  const [dataset, setDataset] = useState<DatasetStats | null>(null);
   const [live, setLive] = useState<LiveAnalytics | null>(null);
   const [throughput, setThroughput] = useState<BandwidthResult | null>(null);
   const [convergence, setConvergence] = useState<ConvergenceResult | null>(null);
@@ -143,6 +140,10 @@ export const AnalyticsView: React.FC<{
   const [method, setMethod] = useState<RoutingMethod>('ospf');
 
   const [busy, setBusy] = useState(false);
+  /** True only while a run the user asked for is in flight. The page also
+   *  re-measures on its own every minute; that background run refreshes the
+   *  figures but must not make the button look like it was pressed. */
+  const [manualBusy, setManualBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [reachedLab, setReachedLab] = useState(false);
   const [reachability, setReachability] = useState<Record<string, Record<string, boolean>>>({});
@@ -321,12 +322,9 @@ export const AnalyticsView: React.FC<{
     // is not run at all in that state.
     if (!hasTopologyRouters) return;
     loadLab();
-    // The dataset figures and the pair sweep only mean something for a lab that
-    // is this canvas, so they wait until the scope is confirmed.
+    // The pair sweep only means something for a lab that is this canvas, so it
+    // waits until the scope is confirmed.
     if (!scopeReady) return;
-    getDatasetStats()
-      .then(setDataset)
-      .catch(() => setDataset(null));
     refreshReachability();
   }, [loadLab, refreshReachability, hasTopologyRouters, scopeReady]);
 
@@ -349,10 +347,11 @@ export const AnalyticsView: React.FC<{
   // nothing at all.
   const runSeq = useRef(0);
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (manual = false) => {
     if (!lab?.online || !source || !destination || source === destination) return;
     const seq = ++runSeq.current;
     setBusy(true);
+    if (manual) setManualBusy(true);
     setRunError(null);
     try {
       const result = await getLiveAnalytics(source, destination, includeConvergence, method);
@@ -363,7 +362,10 @@ export const AnalyticsView: React.FC<{
       if (seq !== runSeq.current) return;
       setRunError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (seq === runSeq.current) setBusy(false);
+      if (seq === runSeq.current) {
+        setBusy(false);
+        setManualBusy(false);
+      }
     }
   }, [lab?.online, source, destination, includeConvergence, method]);
 
@@ -379,7 +381,7 @@ export const AnalyticsView: React.FC<{
         );
         // Re-measure rather than optimistically flipping local state: the page
         // should only claim a method is in effect once a traceroute confirms it.
-        await run();
+        await run(true);
       } catch (error) {
         setRunError(error instanceof Error ? error.message : String(error));
       } finally {
@@ -415,17 +417,19 @@ export const AnalyticsView: React.FC<{
   }, [hasTopologyRouters, scopeReady, lab?.online, source, runThroughput]);
 
   // Refresh once a minute so the path chain, interface counters and the
-  // trained-model figures stay current instead of freezing at page load.
+  // trained-model figures stay current instead of freezing at page load. This
+  // is a background run: it updates the numbers without making the button look
+  // like it was pressed.
   useEffect(() => {
     if (!hasTopologyRouters || !scopeReady || !lab?.online) return;
-    const timer = setInterval(run, 60000);
+    const timer = setInterval(() => run(), 60000);
     return () => clearInterval(timer);
   }, [hasTopologyRouters, scopeReady, lab?.online, run]);
 
   // Auto refresh on top of that, for watching an impairment take effect.
   useEffect(() => {
     if (!autoRefresh || !hasTopologyRouters || !scopeReady || !lab?.online) return;
-    const timer = setInterval(run, 15000);
+    const timer = setInterval(() => run(), 15000);
     return () => clearInterval(timer);
   }, [autoRefresh, hasTopologyRouters, scopeReady, lab?.online, run]);
 
@@ -702,12 +706,12 @@ export const AnalyticsView: React.FC<{
           </div>
           <button
             id="analytics-measure"
-            onClick={run}
-            disabled={busy || source === destination}
+            onClick={() => run(true)}
+            disabled={manualBusy || source === destination}
             className="btn-primary mb-px"
           >
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Radar className="w-3.5 h-3.5" />}
-            {busy ? 'Measuring…' : 'Measure now'}
+            {manualBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Radar className="w-3.5 h-3.5" />}
+            {manualBusy ? 'Measuring…' : 'Measure now'}
           </button>
           <label className="btn-secondary mb-px cursor-pointer">
             <input
@@ -718,6 +722,9 @@ export const AnalyticsView: React.FC<{
             />
             Auto
           </label>
+          <span className="text-[10px] font-mono text-ink-muted mb-px">
+            re-measures every 60 s
+          </span>
         </div>
       </div>
 
@@ -978,11 +985,6 @@ export const AnalyticsView: React.FC<{
                 }
                 tone={measured ? 'ok' : 'bad'}
                 action={trend.length > 1 ? <Sparkline points={trend} /> : undefined}
-              />
-              <MetricCard
-                icon={<Zap className="w-4 h-4 text-ai" />}
-                label="Jitter"
-                value={measured ? `${ms(e2e?.jitter_ms)} ms` : '—'}
               />
               <MetricCard
                 icon={<ShieldCheck className="w-4 h-4 text-ok" />}
@@ -1287,42 +1289,6 @@ export const AnalyticsView: React.FC<{
             runThroughput();
           }}
         />
-      )}
-
-      {/* ------------------------------------------------------- dataset card */}
-      {dataset && (
-        <div className="card p-5 space-y-3">
-          <h3 className="text-base font-bold text-ink flex items-center gap-2">
-            <Database className="w-4 h-4 text-accent" />
-            Random Forest training set
-          </h3>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 font-mono">
-            <Figure label="Rows" value={String(dataset.total)} />
-            <Figure
-              label="Measured"
-              value={String(dataset.measured)}
-              tone={dataset.measured_ratio > 0.5 ? 'ok' : 'warn'}
-            />
-            <Figure label="Synthetic" value={String(dataset.synthetic)} />
-            <Figure
-              label="Measured %"
-              value={`${(dataset.measured_ratio * 100).toFixed(1)}%`}
-              tone={dataset.measured_ratio > 0.5 ? 'ok' : 'warn'}
-            />
-            <Figure
-              label="Ready"
-              value={dataset.ready_for_training ? 'yes' : 'no'}
-              tone={dataset.ready_for_training ? 'ok' : 'warn'}
-            />
-          </div>
-          <div className="flex flex-wrap gap-2 pt-1">
-            {Object.entries(dataset.labels).map(([label, count]) => (
-              <span key={label} className="pill-accent">
-                {label}: {count}
-              </span>
-            ))}
-          </div>
-        </div>
       )}
     </div>
   );

@@ -5,7 +5,6 @@ import {
   BarChart3,
   Settings,
   LogOut,
-  Radio,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -22,7 +21,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const menuItems: Array<{ id: ActiveNavTab; label: string; icon: React.ReactNode; badge?: string }> = [
     { id: 'designer', label: 'Network Designer', icon: <Compass className="w-4 h-4" />, badge: 'Core' },
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 className="w-4 h-4" /> },
-    { id: 'monitoring', label: 'Monitoring', icon: <Radio className="w-4 h-4" /> },
     { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
   ];
 

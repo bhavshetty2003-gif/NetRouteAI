@@ -65,7 +65,6 @@ import { HomeView } from './components/views/HomeView';
 import { AuthScreen, AuthLoading } from './components/auth/AuthScreen';
 import { fetchCurrentUser, logoutUser, type AuthUser } from './utils/auth';
 import { AnalyticsView } from './components/views/AnalyticsView';
-import { MonitoringView } from './components/views/MonitoringView';
 import { SettingsModal } from './components/views/SettingsModal';
 import { clearTopology, loadTopology, saveTopology } from './utils/topologyStore';
 
@@ -581,7 +580,7 @@ export default function App() {
         id: `Gi0/${idx}`,
         name: `GigabitEthernet0/${idx}`,
         ipAddress: 'unassigned',
-        subnetMask: '255.255.255.0',
+        subnetMask: '',
         status: 'up',
         macAddress: `00:1B:D4:AA:BB:0${idx}`,
         connectedTo: null,
@@ -592,7 +591,7 @@ export default function App() {
         id: `Fa0/${idx}`,
         name: `FastEthernet0/${idx}`,
         ipAddress: 'unassigned',
-        subnetMask: '255.255.255.0',
+        subnetMask: '',
         status: 'up',
         macAddress: `00:1E:F7:AA:BB:0${idx}`,
         connectedTo: null,
@@ -709,8 +708,14 @@ export default function App() {
    * Write the backend's plan onto the canvas. The lab is configured from
    * exactly this plan, so adopting it is what guarantees the designer and the
    * routers show the same IP rather than two independently-derived ones.
+   *
+   * A port's address is a copy of the address its own link was given, so the
+   * two ends of a link cannot disagree, and no port can show an address the
+   * routers do not hold. A port whose link the plan does not carry -- a
+   * router-to-switch LAN, say -- holds no address at all rather than an
+   * invented one.
    */
-  const adoptPlan = useCallback((result: DeployResult) => {
+  const adoptPlan = useCallback((result: DeployResult, drawn: NetworkCable[]) => {
     setPlan(result);
     const byId = new Map(result.links.map((l) => [l.id, l] as const));
     setCables((prev) =>
@@ -737,14 +742,49 @@ export default function App() {
     setDevices((prev) =>
       prev.map((d) => {
         const deployed = routerIp.get(d.id.toUpperCase());
-        if (!deployed) return d;
+
+        /** The address this port's link carries at its end, or null. */
+        const portAddress = (portId: string): { ip: string; mask: string } | null => {
+          const cable = drawn.find(
+            (c) =>
+              (c.fromDeviceId === d.id && c.fromPort === portId) ||
+              (c.toDeviceId === d.id && c.toPort === portId)
+          );
+          if (!cable) return null;
+          const allocated = byId.get(cable.id);
+          if (!allocated) return null;
+          const isSource = cable.fromDeviceId === d.id && cable.fromPort === portId;
+          const ip = isSource ? allocated.source_ip : allocated.target_ip;
+          if (!ip) return null;
+          return { ip, mask: allocated.mask };
+        };
+
         return {
           ...d,
-          ipAddress: deployed.ip || d.ipAddress,
+          ipAddress: deployed?.ip || d.ipAddress,
           subnetMask:
             result.links.find(
-              (l) => l.source === deployed.id || l.target === deployed.id
+              (l) => l.source === deployed?.id || l.target === deployed?.id
             )?.mask || d.subnetMask,
+          interfaces: d.interfaces.map((i) => {
+            // A port with no link holds no address. An address belonged to the
+            // link, so a port that was unlinked gives it back.
+            if (!i.connectedTo) {
+              return i.ipAddress === 'unassigned' || i.ipAddress === ''
+                ? i
+                : { ...i, ipAddress: 'unassigned', subnetMask: '' };
+            }
+            const address = portAddress(i.id);
+            if (address) return { ...i, ipAddress: address.ip, subnetMask: address.mask };
+            // The plan dropped this link: the port it used to hold an address
+            // for gives it back. A port whose link was never planned keeps
+            // whatever the designer put there.
+            const cable = drawn.find((c) => c.id === i.connectedTo!.cableId);
+            const hadAddress = cable ? Boolean(cable.sourceIp || cable.targetIp) : false;
+            return hadAddress
+              ? { ...i, ipAddress: 'unassigned', subnetMask: '' }
+              : i;
+          }),
         };
       })
     );
@@ -756,14 +796,33 @@ export default function App() {
     setIsPlanning(true);
     setLabMessage(null);
     try {
-      adoptPlan(await previewAddresses(buildDeployPayload()));
+      adoptPlan(await previewAddresses(buildDeployPayload()), cables);
       setLabMessage({ kind: 'ok', text: 'Addresses allocated. Deploy to put them on the routers.' });
     } catch (err) {
       setLabMessage({ kind: 'bad', text: err instanceof Error ? err.message : String(err) });
     } finally {
       setIsPlanning(false);
     }
-  }, [buildDeployPayload, adoptPlan]);
+  }, [buildDeployPayload, adoptPlan, cables]);
+
+  // The links the lab is actually built from: two routers. A link to a switch
+  // or a PC is a LAN segment the backend never creates, so it is never given an
+  // address -- and counting it here kept the planner awake forever, because a
+  // link that can never be addressed never leaves the "unaddressed" set.
+  const deployableLinkIds = useMemo(() => {
+    const routerIds = new Set(
+      devices.filter((d) => d.type === 'router').map((d) => d.id.toUpperCase())
+    );
+    return new Set(
+      cables
+        .filter(
+          (c) =>
+            routerIds.has(c.fromDeviceId.toUpperCase()) &&
+            routerIds.has(c.toDeviceId.toUpperCase())
+        )
+        .map((c) => c.id)
+    );
+  }, [devices, cables]);
 
   // The set of drawn links that have no address yet. This is the trigger for
   // the automatic plan below: a newly drawn link is in here, and so is a link
@@ -771,11 +830,14 @@ export default function App() {
   const unaddressedKey = useMemo(
     () =>
       cables
-        .filter((c) => !c.subnet || !c.sourceIp || !c.targetIp)
+        .filter(
+          (c) =>
+            deployableLinkIds.has(c.id) && (!c.subnet || !c.sourceIp || !c.targetIp)
+        )
         .map((c) => c.id)
         .sort()
         .join(','),
-    [cables]
+    [cables, deployableLinkIds]
   );
   // Every device id, sorted. The plan is about devices as well as links: a
   // duplicate or orphan router is exactly the sort of thing that made the
@@ -788,52 +850,61 @@ export default function App() {
   // `isPlanning` alone is what stops a refusal from retrying forever: if the
   // backend cannot allocate, the key is unchanged and nothing re-fires.
   const plannedKeyRef = useRef<string>('');
+  // Monotonic run id for the automatic plan. See the effect below for why
+  // this is a sequence number and not a cancellation flag.
+  const planRunRef = useRef(0);
 
   // Ask for addresses the moment a link exists, rather than waiting for the
   // "Plan addresses" button. A link that has been drawn and shows no IP reads
   // as unfinished, and worse, the IP the user eventually sees has to be the one
   // the routers get -- which is only guaranteed if the canvas is showing the
   // backend's own allocation before a deploy is possible.
+  //
+  // The answer is applied by run number, not by a "was I cancelled?" flag.
+  // This effect sets `isPlanning`, and `isPlanning` is one of its own
+  // dependencies, so the effect re-runs while the request is still in flight:
+  // a cleanup that cancelled the request would cancel the plan it had just
+  // asked for, leaving the canvas without addresses and the planner switched
+  // off for good. A newer request simply wins, and the older one drops its
+  // answer instead of writing a stale one.
   useEffect(() => {
     if (!planKey || planKey === plannedKeyRef.current || isPlanning) return;
     plannedKeyRef.current = planKey;
-    let cancelled = false;
+    const run = ++planRunRef.current;
+    const payload = buildDeployPayload();
     (async () => {
       setIsPlanning(true);
       try {
-        const result = await previewAddresses(buildDeployPayload());
-        if (!cancelled) {
-          adoptPlan(result);
-          setLabMessage(null);
-        }
-        // Every link now has an address, so clear the guard and let a later edit
-        // (a new link, a changed class) trigger another pass.
-        plannedKeyRef.current = '';
+        const result = await previewAddresses(payload);
+        if (run !== planRunRef.current) return;
+        adoptPlan(result, cables);
+        setLabMessage(null);
+        // The guard is cleared only when the plan covered every link that was
+        // asked about. If it did not, the guard stays where it is, which is
+        // what stops the planner from asking the same question for ever.
+        plannedKeyRef.current =
+          result.links.length === payload.links.length ? '' : planKey;
       } catch (err) {
+        if (run !== planRunRef.current) return;
         plannedKeyRef.current = planKey;
-        if (!cancelled) {
-          setLabMessage({
-            kind: 'bad',
-            text: `Could not allocate an address for the new link: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          });
-        }
+        setLabMessage({
+          kind: 'bad',
+          text: `Could not allocate an address for the new link: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
       } finally {
-        if (!cancelled) setIsPlanning(false);
+        if (run === planRunRef.current) setIsPlanning(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [planKey, buildDeployPayload, adoptPlan, isPlanning]);
+  }, [planKey, buildDeployPayload, adoptPlan, isPlanning, cables]);
 
   const handleDeploy = useCallback(async () => {
     setIsDeploying(true);
     setLabMessage(null);
     try {
       const result = await deployLab(buildDeployPayload());
-      adoptPlan(result);
+      adoptPlan(result, cables);
       setLabMessage({
         kind: 'ok',
         text: `Lab built from this canvas: ${result.routers.length} routers, ${result.links.length} links, areas ${result.areas.join(', ')}. Every address, cost and area was read back from the routers before this returned.`,
@@ -849,7 +920,7 @@ export default function App() {
     } finally {
       setIsDeploying(false);
     }
-  }, [buildDeployPayload, adoptPlan]);
+  }, [buildDeployPayload, adoptPlan, cables]);
 
   const handleTeardown = useCallback(async () => {
     setIsDeploying(true);
@@ -921,14 +992,17 @@ export default function App() {
     setCables((prev) =>
       prev.filter((c) => c.fromDeviceId !== deviceId && c.toDeviceId !== deviceId)
     );
-    // Unlink any peer interfaces
+    // Unlink any peer interfaces. A port whose link is gone gives its address
+    // back, because the address belonged to the link and not to the port.
     setDevices((prev) =>
       prev
         .filter((d) => d.id !== deviceId)
         .map((d) => ({
           ...d,
           interfaces: d.interfaces.map((i) =>
-            i.connectedTo?.deviceId === deviceId ? { ...i, connectedTo: null } : i
+            i.connectedTo?.deviceId === deviceId
+              ? { ...i, connectedTo: null, ipAddress: 'unassigned', subnetMask: '' }
+              : i
           ),
         }))
     );
@@ -952,7 +1026,7 @@ export default function App() {
           ...d,
           interfaces: d.interfaces.map((i) =>
             i.connectedTo && deviceIds.includes(i.connectedTo.deviceId)
-              ? { ...i, connectedTo: null }
+              ? { ...i, connectedTo: null, ipAddress: 'unassigned', subnetMask: '' }
               : i
           ),
         }))
@@ -965,14 +1039,17 @@ export default function App() {
   const handleDeleteCable = (cableId: string) => {
     const cable = cables.find((c) => c.id === cableId);
     if (cable) {
-      // Unlink interfaces
+      // Unlink interfaces. The address belonged to the link, so the two ports
+      // give it back with it.
       setDevices((prev) =>
         prev.map((d) => {
           if (d.id === cable.fromDeviceId || d.id === cable.toDeviceId) {
             return {
               ...d,
               interfaces: d.interfaces.map((i) =>
-                i.connectedTo?.cableId === cableId ? { ...i, connectedTo: null } : i
+                i.connectedTo?.cableId === cableId
+                  ? { ...i, connectedTo: null, ipAddress: 'unassigned', subnetMask: '' }
+                  : i
               ),
             };
           }
@@ -1724,9 +1801,7 @@ export default function App() {
             cables={cables}
             onOpenDesigner={() => setActiveTab('designer')}
           />
-        ) : (
-          <MonitoringView devices={devices} />
-        )}
+        ) : null}
       </div>
 
       {/* 3. Modal Dialogs */}

@@ -148,5 +148,4 @@ export type ActiveNavTab =
   | 'home'
   | 'designer'
   | 'analytics'
-  | 'monitoring'
   | 'settings';

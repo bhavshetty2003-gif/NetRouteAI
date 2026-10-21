@@ -451,16 +451,6 @@ export interface LiveAnalytics {
   };
 }
 
-export interface DatasetStats {
-  total: number;
-  measured: number;
-  synthetic: number;
-  measured_ratio: number;
-  labels: Record<string, number>;
-  training_samples: number;
-  ready_for_training: boolean;
-}
-
 /** Read a FastAPI error body so the UI can show the real reason, not "failed". */
 async function describeFailure(response: Response, action: string): Promise<string> {
   let detail = response.statusText;
@@ -673,69 +663,6 @@ export async function measureLabPath(
     body: JSON.stringify({ source, destination, count }),
   });
   if (!response.ok) throw new Error(await describeFailure(response, "Measurement"));
-  return response.json();
-}
-
-export async function getDatasetStats(): Promise<DatasetStats> {
-  const response = await apiFetch(`${API_BASE}/api/dataset`);
-  if (!response.ok) throw new Error(await describeFailure(response, "Dataset stats"));
-  return response.json();
-}
-
-export interface LabSweep {
-  timestamp: number;
-  lab: { online: boolean; device_count: number; link_count: number };
-  devices: Record<string, LabDevice>;
-  interfaces: Record<
-    string,
-    {
-      container: string;
-      interfaces: Array<{
-        name: string;
-        state: string;
-        rx_bytes: number;
-        rx_packets: number;
-        rx_errors: number;
-        rx_dropped: number;
-        tx_bytes: number;
-        tx_packets: number;
-        tx_errors: number;
-        tx_dropped: number;
-      }>;
-      queues: Record<
-        string,
-        {
-          kind: string;
-          queue_length: number;
-          dropped: number;
-          overlimits: number;
-          backlog_packets: number;
-        }
-      >;
-    }
-  >;
-  resources: Record<
-    string,
-    {
-      container: string;
-      cpu: { usage_percent: number };
-      memory: { usage_percent: number; total_kb: number; available_kb: number };
-    }
-  >;
-  ospf: Record<
-    string,
-    {
-      container: string;
-      neighbors: Array<{ neighbor_id: string; state: string; address: string; interface: string; full: boolean }>;
-      routes: Array<{ prefix: string; distance: number; cost: number; ospf: boolean }>;
-      spf: Record<string, unknown>;
-    }
-  >;
-}
-
-export async function getLabSweep(includeOspf = true): Promise<LabSweep> {
-  const response = await apiFetch(`${API_BASE}/api/lab/metrics?include_ospf=${includeOspf}`);
-  if (!response.ok) throw new Error(await describeFailure(response, "Lab sweep"));
   return response.json();
 }
 

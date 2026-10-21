@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { NetworkDevice, NetworkInterface } from '../types/network';
+import { NetworkDevice } from '../types/network';
 import {
   Terminal,
   Activity,
   Server,
   Plus,
   Trash2,
-  Edit2,
   Check,
   Power,
   Info,
@@ -55,12 +54,6 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
   const [gatewayError, setGatewayError] = useState<string | null>(null);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
 
-  const [editingIfaceId, setEditingIfaceId] = useState<string | null>(null);
-  const [editingIfaceIp, setEditingIfaceIp] = useState<string>('');
-  const [editingIfaceMask, setEditingIfaceMask] = useState<string>('255.255.255.0');
-  const [ifaceIpError, setIfaceIpError] = useState<string | null>(null);
-  const [ifaceMaskError, setIfaceMaskError] = useState<string | null>(null);
-
   useEffect(() => {
     if (device) {
       setName(device.name);
@@ -78,7 +71,6 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
       setSubnetError(null);
       setGatewayError(null);
       setSaveFeedback(null);
-      setEditingIfaceId(null);
     }
   }, [device?.id, device?.name, device?.ipAddress, device?.subnetMask, device?.gateway]);
 
@@ -187,52 +179,14 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
     onUpdateDevice({ ...device, interfaces: updated });
   };
 
-  const handleStartEditIface = (iface: NetworkInterface) => {
-    setEditingIfaceId(iface.id);
-    const ip = iface.ipAddress && iface.ipAddress !== 'unassigned' ? iface.ipAddress : '';
-    setEditingIfaceIp(ip);
-    // Same rule as the primary address: a valid IP implies its classful
-    // mask, so a stale /30 beside 10.0.0.1 cannot be saved back unnoticed.
-    setEditingIfaceMask(ip ? classfulMaskFor(ip) : iface.subnetMask || '255.255.255.0');
-    setIfaceIpError(null);
-    setIfaceMaskError(null);
-  };
-
-  const handleSaveIfaceConfig = (ifaceId: string) => {
-    const ipRes = validateIPv4(editingIfaceIp, 'Interface IP Address', true);
-    const maskRes = validateSubnetMask(editingIfaceMask);
-
-    if (!ipRes.isValid) {
-      setIfaceIpError(ipRes.error || 'Incorrect interface IP. Please rewrite.');
-      return;
-    }
-    if (!maskRes.isValid) {
-      setIfaceMaskError(maskRes.error || 'Incorrect subnet mask. Please rewrite.');
-      return;
-    }
-    const pairRes = validateIpMaskPair(editingIfaceIp, editingIfaceMask);
-    if (!pairRes.isValid) {
-      setIfaceMaskError(pairRes.error || 'Incorrect subnet mask for this address. Please rewrite.');
-      return;
-    }
-
-    const updated = device.interfaces.map((i) => {
-      if (i.id === ifaceId) {
-        return {
-          ...i,
-          ipAddress: editingIfaceIp.trim() || 'unassigned',
-          subnetMask: editingIfaceMask.trim(),
-        };
-      }
-      return i;
-    });
-
-    onUpdateDevice({ ...device, interfaces: updated });
-    setEditingIfaceId(null);
-  };
-
   const hasFormErrors = !!ipError || !!subnetError || !!gatewayError;
   const activeLinksCount = device.interfaces.filter((i) => i.connectedTo !== null).length;
+
+  // Only the ports that carry a link are worth listing: a spare port has no
+  // address, no peer and nothing the routers ever see. The count of free
+  // ports is reported instead, so the spare capacity is still visible.
+  const usedPorts = device.interfaces.filter((i) => i.connectedTo !== null);
+  const freePorts = device.interfaces.length - usedPorts.length;
 
   return (
     <div className="w-80 lg:w-88 h-full bg-base border-l border-line flex flex-col overflow-hidden select-none">
@@ -519,13 +473,16 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-semibold text-accent uppercase tracking-wider flex items-center gap-1.5">
               <Server className="w-3.5 h-3.5" />
-              <span>Interfaces ({device.interfaces.length})</span>
+              <span>
+                Interfaces ({usedPorts.length} in use
+                {freePorts > 0 ? ` · ${freePorts} free` : ''})
+              </span>
             </h4>
             {(device.type === 'router' || device.type === 'switch') && (
               <button
                 onClick={() => onAddInterface(device)}
                 className="flex items-center space-x-1 text-[11px] px-2 py-0.5 rounded bg-panel hover:bg-raised text-accent border border-line transition-colors cursor-pointer"
-                title="Add extra interface"
+                title="Add a spare port"
               >
                 <Plus className="w-3 h-3" />
                 <span>Add Port</span>
@@ -533,157 +490,62 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
             )}
           </div>
 
-          <div className="space-y-2">
-            {device.interfaces.map((iface) => {
-              const isUp = iface.status === 'up';
-              const isConnected = !!iface.connectedTo;
-              const isEditingThis = editingIfaceId === iface.id;
+          {usedPorts.length === 0 ? (
+            <p className="text-[11px] text-ink-muted font-mono">
+              No port is carrying a link yet.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {usedPorts.map((iface) => {
+                const isUp = iface.status === 'up';
+                const hasAddress = Boolean(iface.ipAddress) && iface.ipAddress !== 'unassigned';
 
-              return (
-                <div
-                  key={iface.id}
-                  className={`p-2.5 rounded-lg border transition-all ${
-                    isEditingThis
-                      ? 'bg-panel border-accent/60 shadow-md'
-                      : 'bg-panel/70 border-line'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => handleToggleInterface(iface.id)}
-                        title={`Click to administratively ${isUp ? 'SHUTDOWN' : 'ENABLE'} interface`}
-                        className={`p-1 rounded transition-colors cursor-pointer ${
-                          isUp
-                            ? 'text-ok bg-ok-soft/60 hover:bg-ok-soft'
-                            : 'text-bad bg-bad-soft/60 hover:bg-bad-soft'
-                        }`}
-                      >
-                        <Power className="w-3 h-3" />
-                      </button>
-                      <span className="text-xs font-mono font-bold text-ink">{iface.id}</span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
-                          isUp ? 'bg-ok-soft text-ok' : 'bg-bad-soft text-bad'
-                        }`}
-                      >
-                        {isUp ? 'UP' : 'DOWN'}
-                      </span>
-                    </div>
+                return (
+                  <div key={iface.id} className="p-2.5 rounded-lg border bg-panel/70 border-line">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => handleToggleInterface(iface.id)}
+                          title={`Click to administratively ${isUp ? 'SHUTDOWN' : 'ENABLE'} interface`}
+                          className={`p-1 rounded transition-colors cursor-pointer ${
+                            isUp
+                              ? 'text-ok bg-ok-soft/60 hover:bg-ok-soft'
+                              : 'text-bad bg-bad-soft/60 hover:bg-bad-soft'
+                          }`}
+                        >
+                          <Power className="w-3 h-3" />
+                        </button>
+                        <span className="text-xs font-mono font-bold text-ink">{iface.id}</span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
+                            isUp ? 'bg-ok-soft text-ok' : 'bg-bad-soft text-bad'
+                          }`}
+                        >
+                          {isUp ? 'UP' : 'DOWN'}
+                        </span>
+                      </div>
 
-                    <div className="flex items-center space-x-1.5">
                       <span className="text-[11px] font-mono text-ink-soft">
-                        {iface.ipAddress && iface.ipAddress !== 'unassigned' ? iface.ipAddress : 'No IP'}
+                        {hasAddress ? iface.ipAddress : 'no address'}
                       </span>
-                      <button
-                        onClick={() => {
-                          if (isEditingThis) {
-                            setEditingIfaceId(null);
-                          } else {
-                            handleStartEditIface(iface);
-                          }
-                        }}
-                        title={isEditingThis ? 'Close editor' : 'Configure interface IP'}
-                        className="p-1 text-ink-muted hover:text-accent hover:bg-raised rounded transition-colors cursor-pointer"
-                      >
-                        <Edit2 className="w-3 h-3" />
-                      </button>
+                    </div>
+
+                    <div className="text-[10px] text-ink-soft flex items-center justify-between font-mono bg-base/60 px-2 py-1 rounded mt-1">
+                      <span>Link Status:</span>
+                      <span className="text-accent">
+                        {`Connected: ${iface.connectedTo?.deviceId} (${iface.connectedTo?.interfaceId})`}
+                      </span>
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          )}
 
-                  {/* Inline Interface Editor with validation */}
-                  {isEditingThis && (
-                    <div className="mt-2 pt-2 border-t border-line/80 space-y-2 font-mono text-[11px]">
-                      <div>
-                        <label className="text-[10px] text-ink-soft block mb-0.5">Interface IP Address</label>
-                        <input
-                          type="text"
-                          value={editingIfaceIp}
-                          onChange={(e) => {
-                            setEditingIfaceIp(e.target.value);
-                            const res = validateIPv4(e.target.value, 'Interface IP', true);
-                            setIfaceIpError(res.isValid ? null : res.error || 'Incorrect IP. Please rewrite.');
-                            if (res.isValid && res.cleanedValue && !isUnassignedIp(res.cleanedValue)) {
-                              // The mask follows the address: 10.0.0.3 shows 255.0.0.0.
-                              setEditingIfaceMask(classfulMaskFor(res.cleanedValue));
-                              setIfaceMaskError(null);
-                            }
-                          }}
-                          placeholder="e.g. 192.168.1.1 or unassigned"
-                          className={`w-full px-2 py-1 rounded bg-base text-ink text-xs focus:outline-none ${
-                            ifaceIpError ? 'border border-bad text-bad' : 'border border-line focus:border-accent'
-                          }`}
-                        />
-                        {ifaceIpError && (
-                          <div className="text-[10px] text-bad mt-1 flex items-start gap-1">
-                            <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
-                            <span>{ifaceIpError}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] text-ink-soft block mb-0.5">Interface Subnet Mask</label>
-                        <input
-                          type="text"
-                          value={editingIfaceMask}
-                          onChange={(e) => {
-                            setEditingIfaceMask(e.target.value);
-                            const res = validateSubnetMask(e.target.value);
-                            if (!res.isValid) {
-                              setIfaceMaskError(res.error || 'Incorrect mask. Please rewrite.');
-                              return;
-                            }
-                            const pair = validateIpMaskPair(editingIfaceIp, e.target.value);
-                            setIfaceMaskError(
-                              pair.isValid ? null : pair.error || 'Incorrect mask for this address. Please rewrite.'
-                            );
-                          }}
-                          placeholder="e.g. 255.255.255.0"
-                          className={`w-full px-2 py-1 rounded bg-base text-ink text-xs focus:outline-none ${
-                            ifaceMaskError ? 'border border-bad text-bad' : 'border border-line focus:border-accent'
-                          }`}
-                        />
-                        {ifaceMaskError && (
-                          <div className="text-[10px] text-bad mt-1 flex items-start gap-1">
-                            <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
-                            <span>{ifaceMaskError}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-end space-x-1.5 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => setEditingIfaceId(null)}
-                          className="px-2 py-0.5 rounded text-ink-muted hover:text-ink bg-panel text-[10px] cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleSaveIfaceConfig(iface.id)}
-                          disabled={!!ifaceIpError || !!ifaceMaskError}
-                          className="px-2.5 py-0.5 rounded bg-accent-deep hover:bg-accent disabled:opacity-50 text-accent-ink font-bold text-[10px] cursor-pointer"
-                        >
-                          Save Port IP
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="text-[10px] text-ink-soft flex items-center justify-between font-mono bg-base/60 px-2 py-1 rounded mt-1">
-                    <span>Link Status:</span>
-                    <span className={isConnected ? 'text-accent' : 'text-ink-muted'}>
-                      {isConnected
-                        ? `Connected: ${iface.connectedTo?.deviceId} (${iface.connectedTo?.interfaceId})`
-                        : 'Unconnected'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <p className="text-[10px] text-ink-muted font-mono leading-relaxed">
+            A port carries the address the backend allocated for its own link. A link
+            that is not part of the lab has no address to show.
+          </p>
         </div>
 
         {/* Device Information / Hardware Specs */}

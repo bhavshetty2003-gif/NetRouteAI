@@ -1,13 +1,23 @@
 import { NetworkCable, NetworkDevice, NetworkInterface } from '../types/network';
 
+/**
+ * A router's ports, with no address on any of them.
+ *
+ * The ports used to be born holding `192.168.1.1` and `10.0.0.1` — invented
+ * values that no router ever received. They made a freshly drawn router look
+ * half-configured while the backend was allocating the addresses it actually
+ * uses, and they made every router on every canvas show the same two
+ * addresses. A port's address is now written by the plan (`adoptPlan`), from
+ * the link that port carries, and until that happens the port has none.
+ */
 export function createRouterInterfaces(count: number = 8): NetworkInterface[] {
   const list: NetworkInterface[] = [];
   for (let i = 0; i < count; i++) {
     list.push({
       id: `Gi0/${i}`,
       name: `GigabitEthernet0/${i}`,
-      ipAddress: i === 0 ? '192.168.1.1' : i === 1 ? '10.0.0.1' : 'unassigned',
-      subnetMask: '255.255.255.0',
+      ipAddress: 'unassigned',
+      subnetMask: '',
       status: 'up',
       macAddress: `00:1B:D4:${Math.floor(Math.random() * 89 + 10)}:${Math.floor(Math.random() * 89 + 10)}:0${i}`,
       connectedTo: null,
@@ -37,8 +47,10 @@ export function createPCInterfaces(): NetworkInterface[] {
     {
       id: 'Fa0',
       name: 'FastEthernet0',
-      ipAddress: '192.168.1.10',
-      subnetMask: '255.255.255.0',
+      // No address until the link this port is on has one. See
+      // `createRouterInterfaces`.
+      ipAddress: 'unassigned',
+      subnetMask: '',
       status: 'up',
       macAddress: `00:50:79:${Math.floor(Math.random() * 89 + 10)}:${Math.floor(Math.random() * 89 + 10)}:AA`,
       connectedTo: null,
