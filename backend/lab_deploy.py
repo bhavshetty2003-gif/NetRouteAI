@@ -1,8 +1,6 @@
 """Deploy the topology drawn in the designer as a real FRR lab.
 
-This is the piece that makes the analytics page honest. Until now the only
-measurable lab was the hand-committed `enterprise-ospf-lab`, so the designer and
-the measurements could disagree about the network. Here the drawn topology
+This is the piece that makes the analytics page honest. The drawn topology
 becomes the running lab, using the exact addresses, costs and areas the
 designer holds.
 
@@ -960,14 +958,70 @@ def _iface_sort_key(name: str) -> tuple[int, str]:
 # Lifecycle
 # --------------------------------------------------------------------------- #
 def teardown() -> dict[str, Any]:
-    """Remove the generated lab. Safe to call when nothing is running."""
-    if not os.path.exists(os.path.join(LAB_DIR, "docker-compose.yml")):
+    """Remove the generated lab and everything it left on disk.
+
+    Safe to call when nothing is running.
+
+    The whole `labs/current` tree goes, not just the containers: the compose
+    file, every router's `frr.conf` and `plan.json` are output of *this*
+    topology, and leaving them behind meant a torn-down lab still answered
+    `GET /api/lab/deploy` with the topology that no longer existed -- so a
+    freshly drawn canvas was compared against a stale plan and reported as
+    "out of step with this canvas" before anything had been deployed.
+
+    Deleting `plan.json` is also what frees the addresses. Allocation is
+    stateless (`resolve_plan` holds nothing outside the topology it is given,
+    and scans each class from the start), so a link's subnet is "taken" only by
+    the plan currently on disk and the canvas in front of you. Remove the plan
+    and the same subnet is handed straight back to the next link that asks,
+    which is what makes deleting a link or a router free its IPs.
+    """
+    compose_file = os.path.join(LAB_DIR, "docker-compose.yml")
+    had_files = os.path.isdir(LAB_DIR)
+    detail = ""
+
+    if os.path.exists(compose_file):
+        result = _compose("down", "--volumes", "--remove-orphans")
+        detail = (result.stderr or result.stdout or "").strip()[-400:]
+        if result.returncode != 0:
+            return {"removed": False, "detail": detail or "docker compose down failed"}
+
+    # `compose down` removes the containers and their networks for this project,
+    # but a network left behind by an earlier topology (or one whose container
+    # was removed by hand) keeps its subnet and makes the next deploy fail with
+    # "invalid pool request: Pool overlaps". Remove any that survived.
+    _remove_project_networks()
+
+    if had_files:
+        shutil.rmtree(LAB_DIR, ignore_errors=True)
+
+    if not had_files and not detail:
         return {"removed": False, "detail": "no generated lab on disk"}
-    result = _compose("down", "--volumes", "--remove-orphans")
     return {
-        "removed": result.returncode == 0,
-        "detail": (result.stderr or result.stdout or "").strip()[-400:],
+        "removed": True,
+        "detail": detail or "generated lab, its files and its networks were removed",
     }
+
+
+def _remove_project_networks() -> list[str]:
+    """Delete any network belonging to this compose project.
+
+    Best-effort: a network still attached to a running container is skipped
+    rather than raising, because the caller has already asked compose to stop
+    everything and an error here would hide that teardown succeeded.
+    """
+    removed: list[str] = []
+    try:
+        client = _client()
+        for network in client.networks.list(filters={"name": COMPOSE_PROJECT}):
+            try:
+                network.remove()
+                removed.append(network.name)
+            except DockerException:
+                continue
+    except DockerException:
+        pass
+    return removed
 
 
 def _wait_for_frr(client, containers: list[str], deadline: float) -> None:
@@ -1046,18 +1100,13 @@ def save_plan(plan: dict[str, Any], assignments: dict[str, dict[str, str]]) -> N
         json.dump({"plan": plan, "interfaces": assignments}, handle, indent=2)
 
 
-ENTERPRISE_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "enterprise-ospf-lab"
-)
-
-
 def _free_container_names(names: list[str], client) -> list[str]:
     """Stop and remove any container that already owns one of these names.
 
-    Container names are derived from router ids, so a freshly designed lab and
-    the fixed `enterprise-ospf-lab` both want `r1`, `r2`, ... and the second one
-    to start would fail outright. The collision is resolved here rather than
-    surfaced as an opaque Docker error.
+    Container names are derived from router ids, so a lab built from a new
+    drawing wants `r1`, `r2`, ... and anything already running under those
+    names has to go first. The collision is resolved here rather than surfaced
+    as an opaque Docker error.
     """
     removed: list[str] = []
     for name in names:
@@ -1076,34 +1125,6 @@ def _free_container_names(names: list[str], client) -> list[str]:
                 f"Stop it first ({exc})."
             ) from exc
     return removed
-
-
-def deploy_enterprise() -> dict[str, Any]:
-    """Bring the fixed `enterprise-ospf-lab` back up.
-
-    This is the fallback: it is the lab every measurement endpoint was built
-    against, so it stays available when no designed topology has been deployed.
-    """
-    compose_file = os.path.join(ENTERPRISE_DIR, "docker-compose.yml")
-    if not os.path.exists(compose_file):
-        raise DeployError(f"No fixed lab compose file at {compose_file}")
-
-    current = load_plan()
-    if current:
-        teardown()
-
-    result = subprocess.run(
-        ["docker", "compose", "up", "-d"],
-        cwd=ENTERPRISE_DIR,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if result.returncode != 0:
-        raise DeployError(
-            "Could not start the fixed lab: " + (result.stderr or result.stdout or "").strip()[-500:]
-        )
-    return {"ok": True, "lab": "enterprise-ospf-lab", "compose_file": compose_file}
 
 
 def deploy(topology: dict[str, Any], wait_seconds: float = 90.0) -> dict[str, Any]:
@@ -1141,7 +1162,7 @@ def deploy(topology: dict[str, Any], wait_seconds: float = 90.0) -> dict[str, An
     # already removed LAB_DIR, and `configure` can still fail verification, so
     # saving only on success left a running lab with no plan on disk --
     # `deployed_lab_running()` then reported False and GET /api/lab/deploy
-    # mislabelled the designer's own topology as the enterprise fallback.
+    # reported no lab at all for a lab that was plainly running.
     save_plan(plan, {})
 
     # FRR is still loading its own config at this point; pushing now would be

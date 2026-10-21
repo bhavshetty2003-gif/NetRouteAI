@@ -517,7 +517,7 @@ export interface DeployResult {
 }
 
 export interface DeployState {
-  source: "designer" | "enterprise-ospf-lab" | null;
+  source: "designer" | null;
   running: boolean;
   plan: { routers: DeployRouter[]; links: DeployLink[]; areas: number[] } | null;
   interfaces: Record<string, Record<string, string>> | null;
@@ -553,13 +553,6 @@ export async function getDeployState(): Promise<DeployState> {
 export async function teardownDeployedLab(): Promise<{ removed: boolean; detail: string }> {
   const response = await fetch(`${API_BASE}/api/lab/deploy/teardown`, { method: "POST" });
   if (!response.ok) throw new Error(await describeFailure(response, "Teardown"));
-  return response.json();
-}
-
-/** Bring the fixed enterprise-ospf-lab back up as the measurement target. */
-export async function deployEnterpriseLab(): Promise<{ ok: boolean; lab: string }> {
-  const response = await fetch(`${API_BASE}/api/lab/deploy/enterprise`, { method: "POST" });
-  if (!response.ok) throw new Error(await describeFailure(response, "Deploy fixed lab"));
   return response.json();
 }
 

@@ -22,7 +22,6 @@ import {
   getRingTopology,
   getTreeTopology,
   getBusTopology,
-  getTwelveRouterTopology,
   createRouterInterfaces,
   createSwitchInterfaces,
   createPCInterfaces,
@@ -32,7 +31,6 @@ import {
   uploadTopology,
   getAiRouteRecommendation,
   deployLab,
-  deployEnterpriseLab,
   getDeployState,
   previewAddresses,
   teardownDeployedLab,
@@ -75,9 +73,8 @@ import { clearTopology, loadTopology, saveTopology } from './utils/topologyStore
  * sign-in starts from a blank workspace rather than a seeded R1/R2 pair. See
  * utils/topologyStore.ts for why the key is per account. */
 
-/** Presets offered in the toolbar. `twelve` is the 12-router multi-area
- *  topology the measurement work was verified against. */
-type PresetName = 'star' | 'mesh' | 'tree' | 'bus' | 'ring' | 'twelve';
+/** Presets offered in the toolbar. */
+type PresetName = 'star' | 'mesh' | 'tree' | 'bus' | 'ring';
 
 export default function App() {
   // Navigation - defaults to comprehensive Home landing page
@@ -461,9 +458,6 @@ export default function App() {
   const handleSelectPreset = (preset: PresetName) => {
     let newTop: { devices: NetworkDevice[]; cables: NetworkCable[] };
     switch (preset) {
-      case 'twelve':
-        newTop = getTwelveRouterTopology();
-        break;
       case 'star':
         newTop = getStarTopology();
         break;
@@ -874,24 +868,6 @@ export default function App() {
     }
   }, []);
 
-  const handleDeployEnterprise = useCallback(async () => {
-    setIsDeploying(true);
-    setLabMessage(null);
-    try {
-      await deployEnterpriseLab();
-      setLabMessage({
-        kind: 'ok',
-        text: 'The fixed enterprise-ospf-lab is running. Its addresses are its own, not this canvas — deploy the canvas to measure this topology instead.',
-      });
-      setDeployState({ source: 'enterprise-ospf-lab', running: true, plan: null, interfaces: null });
-      setPlan(null);
-    } catch (err) {
-      setLabMessage({ kind: 'bad', text: err instanceof Error ? err.message : String(err) });
-    } finally {
-      setIsDeploying(false);
-    }
-  }, []);
-
   // Adopt whatever plan the running lab was actually built from, so a page
   // reload shows the addresses the routers hold rather than the defaults.
   useEffect(() => {
@@ -917,7 +893,6 @@ export default function App() {
   // UI has to say so rather than quietly reporting the wrong routers' numbers.
   const labMatchesCanvas = useMemo(() => {
     if (!deployState) return true;
-    if (deployState.source === 'enterprise-ospf-lab') return false;
     if (!deployState.plan) return true;
     const planned = new Set(deployState.plan.routers.map((r) => r.id.toUpperCase()));
     const onCanvas = devices.filter((d) => d.type === 'router').map((d) => d.id.toUpperCase());
@@ -1498,7 +1473,6 @@ export default function App() {
               message={labMessage}
               onPlan={handlePlanAddresses}
               onTeardown={handleTeardown}
-              onDeployEnterprise={handleDeployEnterprise}
             />
 
             {/* Core Designer 3-Column Split: Device Palette | Canvas | Properties Panel */}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Container, Trash2, Building2, Loader2, TriangleAlert, CircleCheck } from 'lucide-react';
+import { Container, Trash2, Loader2, TriangleAlert, CircleCheck } from 'lucide-react';
 import type { DeployState } from '../utils/api';
 
 interface LabDeployBarProps {
@@ -14,7 +14,6 @@ interface LabDeployBarProps {
   message: { kind: 'ok' | 'bad'; text: string } | null;
   onPlan: () => void;
   onTeardown: () => void;
-  onDeployEnterprise: () => void;
 }
 
 /**
@@ -35,19 +34,15 @@ export const LabDeployBar: React.FC<LabDeployBarProps> = ({
   message,
   onPlan,
   onTeardown,
-  onDeployEnterprise,
 }) => {
   const running = Boolean(deployState?.running);
-  const isFallback = deployState?.source === 'enterprise-ospf-lab';
   const canDeploy = routerCount >= 2 && linkCount >= 1;
 
   const status = !running
     ? { text: 'No lab running', tone: 'text-ink-muted' }
-    : isFallback
-      ? { text: 'Running the fixed enterprise-ospf-lab', tone: 'text-warn' }
-      : matchesCanvas
-        ? { text: `Running this canvas (${deployState?.plan?.routers.length ?? routerCount} routers)`, tone: 'text-ok' }
-        : { text: 'Running a lab that is out of step with this canvas', tone: 'text-warn' };
+    : matchesCanvas
+      ? { text: `Running this canvas (${deployState?.plan?.routers.length ?? routerCount} routers)`, tone: 'text-ok' }
+      : { text: 'Running a lab that is out of step with this canvas', tone: 'text-warn' };
 
   return (
     <div className="border-b border-line bg-base px-3 py-2">
@@ -86,17 +81,6 @@ export const LabDeployBar: React.FC<LabDeployBarProps> = ({
               Remove
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={onDeployEnterprise}
-            disabled={isBusy}
-            className="flex items-center gap-1.5 rounded border border-line bg-panel px-2.5 py-1.5 text-[11px] font-semibold text-ink-faint hover:text-ink-muted hover:border-ink-faint disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Start the pre-built 12-router reference lab"
-          >
-            <Building2 className="w-3 h-3" />
-            Reference lab
-          </button>
         </div>
       </div>
 

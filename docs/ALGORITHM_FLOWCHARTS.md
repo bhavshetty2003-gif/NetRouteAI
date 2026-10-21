@@ -85,8 +85,6 @@ flowchart TD
     LIVE_REQ --> CMP["compare_ospf_vs_ai — see diagram 10"]
     CMP --> TABLE["Comparison table, traced path,<br/>end-to-end figures, provenance panel"]
 
-    FALLBACK["POST /api/lab/deploy/enterprise<br/>explicit fallback lab"] -.->|"only if the drawn topology<br/>is not deployed"| ANALYTICS
-
     style PLANNING fill:#e8f4f8,stroke:#0d6e85
     style DEPLOYMENT fill:#fdf0e6,stroke:#b5651d
     style ANALYTICS_VIEW fill:#eef7ee,stroke:#3d7a3d
@@ -1168,8 +1166,7 @@ The CLI terminal stays dark in **both** themes and has its own theme-invariant
 | POST | `/api/lab/plan` | `resolve_plan` | **Diagram 3 + 4** — no Docker touched |
 | POST | `/api/lab/deploy` | `deploy` → `resolve_plan` → `configure` | **Diagrams 5 + 6** |
 | GET | `/api/lab/deploy` | `load_plan` / `deployed_lab_running` | drift check vs the canvas |
-| POST | `/api/lab/deploy/teardown` | `teardown` | `compose down --volumes` |
-| POST | `/api/lab/deploy/enterprise` | `deploy_enterprise` | explicit fallback lab |
+| POST | `/api/lab/deploy/teardown` | `teardown` | `compose down --volumes` + networks + `labs/current` removed |
 | GET | `/api/lab/status` | `discover_lab` | dynamically discovered devices, links, cost histogram |
 | POST | `/api/lab/ping` | `probe_ping` | literal-IP ping from one router's container |
 | POST | `/api/lab/measure` | `measure_path` | **Diagram 10** E2E block |

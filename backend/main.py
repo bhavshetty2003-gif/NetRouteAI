@@ -8,7 +8,6 @@ Surface:
     POST /api/lab/deploy                build the measurable lab from the
                                        designer topology (same IPs/costs/areas)
     GET  /api/lab/deploy                which lab is running + its address plan
-    POST /api/lab/deploy/enterprise     restore the fixed lab as a fallback
     POST /api/lab/deploy/teardown       stop the generated lab
     POST /api/lab/measure               real ping/traceroute between two devices
     GET  /api/lab/metrics               full metric sweep (interfaces, queues,
@@ -57,7 +56,6 @@ from database import (
 from lab_deploy import (
     DeployError,
     deploy,
-    deploy_enterprise,
     deployed_lab_running,
     load_record,
     resolve_plan,
@@ -254,9 +252,7 @@ def lab_deploy_state():
     record = load_record()
     running = deployed_lab_running()
     return {
-        "source": "designer" if running else (
-            "enterprise-ospf-lab" if discover_lab()["online"] else None
-        ),
+        "source": "designer" if running else None,
         "running": running,
         "plan": record["plan"] if record else None,
         "interfaces": record["interfaces"] if record else None,
@@ -303,19 +299,9 @@ def lab_deploy(request: DeployRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/lab/deploy/enterprise")
-def lab_deploy_enterprise():
-    """Restore the fixed `enterprise-ospf-lab` as the measurement target."""
-    try:
-        return deploy_enterprise()
-    except DeployError as exc:
-        deploy_logger.warning("enterprise deploy refused: %s", exc)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @app.post("/api/lab/deploy/teardown")
 def lab_deploy_teardown():
-    """Stop the generated lab without touching the fixed one."""
+    """Stop the generated lab and remove its files and networks."""
     return teardown()
 
 

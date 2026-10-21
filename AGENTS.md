@@ -10,7 +10,6 @@ Multi-package monorepo — each subproject has its own dependency manifest:
 | `backend/` | FastAPI backend — lab metrics collection, routing, analytics, Docker/FRR generation, RF training pipeline |
 | `ai/` | DQN reinforcement-learning routing model (stable-baselines3, gymnasium) — **not** used by the analytics page |
 | `network/` | Mininet topology scripts (`topologies/*.py`; `run.sh` is empty) |
-| `enterprise-ospf-lab/` | Pre-built 12-router multi-area OSPF lab — an explicit **fallback** measurement target, not the default |
 | `ospf-lab/` | 8-router OSPF lab |
 | `shortest-path-demo/` | 5-router shortest-path demo |
 | `scripts/` | Maintenance utilities (`migrate_theme.py`, `audit_contrast.py`) |
@@ -123,16 +122,18 @@ The lab is normally **built from the topology you drew in the designer**, via
 point of the design: what the canvas shows is what gets measured.
 
 ```bash
-# Or, as an explicit fallback, the pre-built lab:
-curl -X POST http://127.0.0.1:8000/api/lab/deploy/enterprise
-# equivalently:
-cd enterprise-ospf-lab && docker compose up -d
+# The only measurement target is the lab built from the canvas. There is no
+# pre-built fallback: if no lab is deployed, the analytics page has nothing
+# to measure and says so.
 ```
 
 Generated labs land in `backend/labs/current/` (compose file + per-router FRR
 config + `plan.json`), which is **gitignored** — it is output, not source.
-The backend discovers whatever is running dynamically; there is no hardcoded
-topology, and the generated lab is the one it finds first.
+`POST /api/lab/deploy/teardown` removes that whole tree *and* the project
+networks, so a torn-down lab leaves nothing behind and the next deploy cannot
+hit "invalid pool request: Pool overlaps". The backend discovers whatever is
+running dynamically; there is no hardcoded topology, and the generated lab is
+the one it finds first.
 
 ### AI (`ai/`)
 
@@ -170,8 +171,7 @@ and `components/GoogleSignInButton.tsx` implement accounts and sign-in.
 | POST | `/api/lab/plan` | Resolve addresses, costs and areas **without touching Docker** |
 | POST | `/api/lab/deploy` | Make the drawn topology the running lab (the current lab) |
 | GET | `/api/lab/deploy` | What is deployed, and whether the lab has drifted from the canvas |
-| POST | `/api/lab/deploy/enterprise` | Bring up `enterprise-ospf-lab` as an explicit fallback |
-| POST | `/api/lab/deploy/teardown` | Stop and remove the generated lab |
+| POST | `/api/lab/deploy/teardown` | Stop the generated lab and delete its files and networks |
 
 ### Live lab measurement (Docker/FRR)
 
@@ -310,9 +310,9 @@ Verified with `frontend/.harness/` (`npm run test:auth`, `test:gate`, `test:goog
 - `apply_impairment` chains tbf and netem (tbf as root, netem as a child) rather than installing both as `root`. An interface has one root qdisc, so the second `add` was silently rejected and the rate limit never applied.
 - Congestion is derived from real `tc -s qdisc` / `ip -s link` counter **deltas** taken around the measurement, not from a loss/jitter formula.
 - Unreachable pairs are skipped by the collector and reported with a `diagnosis` string plus `/api/lab/reachability`; they are not shown as "100% loss".
-- In `enterprise-ospf-lab`, area-2 stub routers (R4, R5, R6) have no route to `10.0.0.0/8` and a stale kernel default route, so router-to-router measurement works on `10.0.0.0/8` but not to those. `frr.conf` files are root-owned and bind-mounted, so `vtysh -c "write memory"` fails with "Resource busy".
+- A router in a **stub** area has no route to the other areas, so pairs that need one are genuinely unreachable — the reachability sweep is the ground truth for which pairs can work. A stale kernel default route does not rescue them.
 - `iperf3` and `ethtool` are absent from all lab images (alpine and frr); throughput is derived from `/proc/net/dev` deltas.
-- `backend/generated/` holds committed FRR configs per router + docker-compose.yml (written by `generator.py` / `docker_compose_generator.py` relative to backend CWD). These files are **committed to git** — don't edit them by hand; modify the generators.
+- The **training** generators (`backend/generator.py`, `docker_compose_generator.py`, `frr_generator.py`, `ip_generator.py`, `topology_generator.py`) are a separate path from the deployed lab: they are used by `train_real_data.py` / `train_model.py` to build throwaway topologies for the RF dataset. The lab the analytics page measures is built by `lab_deploy.py`, not by these.
 - Backend venv is Python 3.14 at `backend/venv/` (also the default interpreter in `.vscode/settings.json`).
 - Frontend has no unit-test suite; `npm run lint` is `tsc --noEmit`. The auth surface
   is covered by the three jsdom harnesses in `frontend/.harness/`, which need the

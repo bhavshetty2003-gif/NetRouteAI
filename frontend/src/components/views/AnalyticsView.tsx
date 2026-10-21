@@ -177,20 +177,14 @@ export const AnalyticsView: React.FC<{
    *  The lab on this machine is one shared lab: whoever deployed last decided
    *  what every analytics page reports. The endpoint filter hides the routers
    *  that do not overlap, but the ones that *do* overlap still measure fine, so
-   *  a stale twelve-router plan would read as a valid report for a new
-   *  four-router canvas. Comparing the deployed plan with the canvas is the only
+   *  a stale plan for a larger drawn topology would read as a valid report for
+   *  a smaller canvas. Comparing the deployed plan with the canvas is the only
    *  thing that notices -- and because every figure can be real and still
    *  describe the wrong network, a non-null result blocks the page entirely. */
   const drift = useMemo<{ detail: string } | null>(() => {
     // Not loaded yet (or the state endpoint failed): say nothing rather than
     // guess at either answer.
     if (!deployState) return null;
-    if (deployState.source === 'enterprise-ospf-lab') {
-      return {
-        detail:
-          'The running lab is the pre-built enterprise fallback, which was never drawn on this canvas.',
-      };
-    }
     if (deployState.source !== 'designer' || !deployState.plan) {
       return {
         detail:
