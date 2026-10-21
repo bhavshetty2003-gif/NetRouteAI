@@ -9,6 +9,8 @@
 #   ./start.sh --stop       stop the API and the UI
 #   ./start.sh --doctor     find the Docker networks that are taking this
 #                           machine's own network, and remove the lab's
+#   ./start.sh --reseat     ask this machine's own network for an address
+#                           again (the other half of the question mark)
 #   ./start.sh --help
 #
 # It installs what is missing (backend venv, node_modules) rather than asking
@@ -23,6 +25,11 @@
 # laptop's own traffic away from its router. The desktop then shows an
 # unidentified network -- a question mark on the wifi icon. The doctor finds
 # the network doing it and removes it.
+#
+# --doctor fixes the route; it also asks the network for an address again, so
+# one command is usually the whole repair. --reseat does only the second half,
+# for the machine whose route is already right and whose connection still
+# will not come up.
 #
 set -euo pipefail
 
@@ -54,9 +61,13 @@ warn() { printf '  %swarn%s %s\n' "$C_WARN" "$C_OFF" "$*" >&2; }
 die()  { printf '  %sFAIL%s %s\n' "$C_BAD" "$C_OFF" "$*" >&2; exit 1; }
 
 usage() {
-  # The header block, which is also the help text. Keep the line range in
-  # step with the comment at the top of this file.
-  sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # The header block, which is also the help text. Every leading comment
+  # line is printed, with its "# " removed, up to the first line that is not
+  # a comment -- so editing the header cannot leave the help text out of
+  # step with it, which a hardcoded line range always eventually does.
+  awk 'NR == 1 { next }
+       /^#/ { sub(/^# ?/, ""); print; next }
+       { exit }' "${BASH_SOURCE[0]}"
 }
 
 # --------------------------------------------------------------------------- #
@@ -345,6 +356,23 @@ do_doctor() {
   "$python_bin" "$ROOT/backend/lab_doctor.py" --fix
 }
 
+# Ask the machine's own network for an address again, without touching Docker.
+#
+# This is the second half of the repair. A question mark on the wifi icon
+# means the machine is associated with the access point and has no address:
+# the DHCP request that failed while the bad route was in place has to be
+# made again before there is an address at all. The route can be perfectly
+# right and the connection still unusable.
+do_reseat() {
+  printf '%sReconnecting to the machine’s own network%s\n' "$C_DIM" "$C_OFF"
+  local python_bin="python3"
+  if [ -x "$VENV/bin/python" ]; then python_bin="$VENV/bin/python"; fi
+  if ! command -v "$python_bin" >/dev/null 2>&1; then
+    die "python3 is needed to run the network doctor"
+  fi
+  "$python_bin" "$ROOT/backend/lab_doctor.py" --reseat
+}
+
 do_start() {
   check_prereqs
   ensure_backend_deps
@@ -405,6 +433,7 @@ while [ $# -gt 0 ]; do
     --stop)    ACTION="stop" ;;
     --status)  ACTION="status" ;;
     --doctor)  ACTION="doctor" ;;
+    --reseat)  ACTION="reseat" ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown option: $1 (try ./start.sh --help)" ;;
   esac
@@ -416,4 +445,5 @@ case "$ACTION" in
   stop)   do_stop ;;
   status) do_status ;;
   doctor) do_doctor ;;
+  reseat) do_reseat ;;
 esac

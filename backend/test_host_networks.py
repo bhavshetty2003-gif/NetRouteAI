@@ -28,6 +28,7 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 
 import host_networks
+import lab_doctor
 from lab_deploy import DeployError, resolve_plan
 
 FAILURES: list[str] = []
@@ -358,6 +359,61 @@ def test_fallback_lans():
     )
 
 
+def test_doctor():
+    print("\n== the doctor that repairs a machine that is already broken ==")
+    # The doctor's second job: the lease. A question mark on the wifi icon
+    # means the machine is associated with the access point and has no
+    # address, because the DHCP request that failed while the bad route was
+    # in place has to be made again. The doctor has to be able to tell those
+    # two states apart, or it will claim a machine is fine when it is not.
+
+    # An interface that holds an address is a working connection.
+    iface = lab_doctor._wireless_interface()
+    if not iface:
+        print("  skip  no wireless interface on this machine")
+        return
+    check(
+        lab_doctor._interface_has_address(iface),
+        f"the live interface {iface} reports whether it holds an address",
+    )
+
+    # An interface that does not exist has no address, and must not be
+    # mistaken for one that does.
+    check(
+        not lab_doctor._interface_has_address("nonexistent0"),
+        "an interface that is not there does not claim to hold an address",
+    )
+
+    # The doctor's own network test must find the lab's networks and leave
+    # everybody else's alone. The app stack is a different compose project,
+    # and a name match on "netrouteai" would take the network the running UI
+    # depends on with it.
+    check(
+        not lab_doctor._is_lab_network(_FakeNetwork("netrouteai-app_default", "netrouteai-app")),
+        "the application stack's network is not the lab's",
+    )
+    check(
+        lab_doctor._is_lab_network(_FakeNetwork("netrouteai_n07", "netrouteai")),
+        "a lab network is the lab's",
+    )
+    check(
+        lab_doctor._is_lab_network(_FakeNetwork("netrouteai_n07", "")),
+        "a lab network made by an older version, with no label, is still caught",
+    )
+    check(
+        not lab_doctor._is_lab_network(_FakeNetwork("br-1234", "")),
+        "Docker's own default bridge is not the lab's to remove",
+    )
+
+
+class _FakeNetwork:
+    """Just enough of a Docker network for the doctor's name tests."""
+
+    def __init__(self, name: str, project: str) -> None:
+        self.name = name
+        self.attrs = {"Labels": {"com.docker.compose.project": project} if project else {}}
+
+
 def main() -> int:
     print("=" * 68)
     print("Host network safety")
@@ -369,6 +425,7 @@ def main() -> int:
     test_bridge_pools()
     test_real_machines()
     test_fallback_lans()
+    test_doctor()
 
     print("\n" + "=" * 68)
     if FAILURES:

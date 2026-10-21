@@ -11,16 +11,26 @@ internet on the machine that is running the lab.
 
 This finds the networks doing that, and can remove the ones the lab created.
 
+It also does the second half of the repair, which is the half that is easy
+to forget: the machine's DHCP request failed while the bad route was in
+place, so it is associated with the access point and has no address. Putting
+the route right does not make the lease arrive by itself; the request has to
+be made again. `--fix` does both.
+
 Usage:
     python lab_doctor.py           report what is wrong
     python lab_doctor.py --fix     remove the lab's conflicting networks too
+    python lab_doctor.py --reseat  only ask the network for an address again
 """
 
 from __future__ import annotations
 
 import ipaddress
 import os
+import shutil
+import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -147,6 +157,114 @@ def _wireless_interface() -> str:
     return ""
 
 
+def _run(command: list[str]) -> tuple[int, str]:
+    """Run a command and return its exit status and output."""
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
+
+
+def _interface_has_address(iface: str) -> bool:
+    """Whether the interface currently holds an IPv4 address.
+
+    This is the difference between a working connection and the question mark
+    on the wifi icon: the machine is associated with the access point either
+    way, but without an address it has no lease and no route, and nothing
+    works.
+    """
+    # An interface that is not there at all has no address. That is a known
+    # answer, not a question that cannot be answered, and the two have to be
+    # told apart: the first is a fault, the second is not.
+    if not os.path.isdir(os.path.join("/sys/class/net", iface)):
+        return False
+    code, out = _run(["ip", "-4", "-o", "addr", "show", "dev", iface])
+    if code != 0:
+        return True  # Cannot tell. Do not claim a fault that may not exist.
+    return "inet " in out
+
+
+def _active_profile(iface: str) -> str:
+    """The NetworkManager profile the interface is currently using."""
+    code, out = _run(["nmcli", "-t", "-f", "NAME,DEVICE", "con", "show", "--active"])
+    if code != 0:
+        return ""
+    for line in out.splitlines():
+        name, _, device = line.partition(":")
+        if device == iface and name:
+            return name
+    return ""
+
+
+def _reseat_connection(iface: str) -> tuple[bool, list[str]]:
+    """Ask the machine's own network for a lease again.
+
+    A question mark on the wifi icon is not the same fault as a wrong route,
+    and fixing the route does not always finish the job.
+
+    While Docker's route was in front, the machine's DHCP request went out
+    through the bridge and never reached the router. NetworkManager timed it
+    out, so the machine is associated with the access point and has no
+    address -- which is exactly what the question mark means. Removing the
+    bad route puts the machine's own route back, but the request that failed
+    has to be made again before the machine has an address.
+
+    Bringing the profile down and up again makes NetworkManager repeat the
+    request, and this time it leaves by the machine's own route.
+    """
+    notes: list[str] = []
+    problems: list[str] = []
+    if not iface:
+        return False, ["No wireless interface was found, so nothing was reconnected."]
+    if shutil.which("nmcli") is None:
+        return False, [
+            "NetworkManager's nmcli is not installed, so the connection was "
+            "not reconnected. Turn the wifi off and on again instead."
+        ]
+
+    profile = _active_profile(iface)
+    if profile:
+        _run(["nmcli", "con", "down", profile])
+        time.sleep(1)
+        code, out = _run(["nmcli", "con", "up", profile])
+        if code != 0:
+            # The profile may not be able to come up by name -- a connection
+            # that was made by hand has no profile of its own. Falling back to
+            # the device is the same thing done the other way round, and it
+            # often works where the profile does not.
+            problems.append(f"Could not bring '{profile}' up: {out.strip()}")
+            _run(["nmcli", "device", "disconnect", iface])
+            time.sleep(1)
+            code, out = _run(["nmcli", "device", "connect", iface])
+            if code != 0:
+                problems.append(f"Could not connect {iface}: {out.strip()}")
+    else:
+        _run(["nmcli", "device", "disconnect", iface])
+        time.sleep(1)
+        code, out = _run(["nmcli", "device", "connect", iface])
+        if code != 0:
+            problems.append(f"Could not connect {iface}: {out.strip()}")
+
+    # Give the lease a moment to arrive before reporting.
+    for _ in range(10):
+        if _interface_has_address(iface):
+            # The address is what matters. A step that failed on the way to
+            # getting it is not reported as a fault once it has arrived.
+            return True, notes
+        time.sleep(1)
+
+    if problems:
+        notes.extend(problems)
+    notes.append(
+        f"{iface} still has no address. The router may be slow to answer, "
+        "or the connection needs to be selected by hand."
+    )
+    return False, notes
+
+
 def _detach(client, network_name: str) -> list[str]:
     """Remove the containers attached to a network.
 
@@ -172,11 +290,27 @@ def _detach(client, network_name: str) -> list[str]:
 
 def main(argv: list[str]) -> int:
     fix = "--fix" in argv
+    reseat_only = "--reseat" in argv
 
     print("This machine's own networks:")
     details = host_networks.host_network_details(refresh=True)
     for entry in details:
         print(f"  {entry['network']:<20} on {entry['iface']}")
+
+    iface = _wireless_interface()
+
+    if reseat_only:
+        # The route may already be right and the lease still wrong, so this
+        # asks the network for an address again without touching Docker.
+        print("\nAsking the machine's own network for an address again...")
+        ok, notes = _reseat_connection(iface)
+        for note in notes:
+            print(f"  {note}")
+        if ok:
+            print(f"\n{iface} has an address again.")
+            return 0
+        print(f"\n{iface} still has no address. The steps below apply.")
+        return 1
 
     client = _client()
     if client is None:
@@ -201,7 +335,22 @@ def main(argv: list[str]) -> int:
                 clashes.append((network.name, pool, str(clash)))
 
     if not clashes:
-        print("\nNo Docker network is using this machine's own network. Nothing to fix.")
+        print("\nNo Docker network is using this machine's own network.")
+        # The route can be right while the lease is still wrong: the question
+        # mark means no address, and a DHCP request that failed while the bad
+        # route was in place has to be made again.
+        if iface and not _interface_has_address(iface):
+            print(f"\nBut {iface} has no address, so the connection is not usable yet.")
+            if fix:
+                ok, notes = _reseat_connection(iface)
+                for note in notes:
+                    print(f"  {note}")
+                if ok:
+                    print(f"\n{iface} has an address again.")
+                    return 0
+                print(f"\n{iface} still has no address.")
+                return 1
+            print("Reconnect it with:  ./start.sh --doctor --reseat")
         return 0
 
     print("\nThese Docker networks are using a network this machine is on:")
@@ -246,13 +395,18 @@ def main(argv: list[str]) -> int:
         for name in removed:
             print(f"  {name}")
         print("\nThe route those networks added is gone. The machine's own route is back.")
-        print("If the network is still unidentified, reconnect to it:")
-        iface = _wireless_interface()
+        # The route being right is half the repair. The other half is the
+        # lease: the DHCP request that failed while the bad route was in
+        # place has to be made again before the machine has an address.
         if iface:
-            print(f"    nmcli device disconnect {iface} && nmcli device connect {iface}")
-        else:
-            print("    nmcli device disconnect <wifi-interface> && nmcli device connect <wifi-interface>")
-        print("or turn the wifi off and on again.")
+            ok, notes = _reseat_connection(iface)
+            for note in notes:
+                print(f"  {note}")
+            if ok:
+                print(f"\n{iface} has an address again, and the connection is usable.")
+            else:
+                print(f"\n{iface} still has no address. Turn the wifi off and on again,")
+                print(f"or run:  nmcli device disconnect {iface} && nmcli device connect {iface}")
     if kept:
         print("\nLeft alone (not the lab's to remove):")
         for name in kept:

@@ -34,6 +34,7 @@ Support) and Obsidian all render these natively.
 | 19 | [Dataset collection loop](#19-dataset-collection-loop) | `backend/dataset_collector.py` |
 | 20 | [Theme + contrast audit](#20-theme--contrast-audit) | `frontend/src/utils/theme.ts`, `scripts/audit_contrast.py` |
 | 21 | [Endpoint → algorithm map](#21-endpoint--algorithm-map) | `backend/main.py` |
+| 22 | [The repair path — a machine that is already broken](#22-the-repair-path--a-machine-that-is-already-broken) | `backend/lab_doctor.py` |
 
 ---
 
@@ -50,6 +51,7 @@ path somewhere in the diagrams below.
 | I4 | **Deleting a link or router releases its address.** | The allocator is stateless — a subnet is taken only by the topology being planned, and each class rescans from the start. Diagram 3 |
 | I5 | **The label never exceeds the evidence.** | Noise-floor gate before declaring a winner; `"n/a"` otherwise. Diagram 13 |
 | I6 | **The lab never takes the machine's own network.** | The allocator skips any candidate whose bridge pool overlaps a network the machine is on. Diagrams 4, 5, 6 |
+| I7 | **A machine that is already broken is repaired with one command.** | The doctor removes the route *and* re-runs DHCP — fixing the route alone leaves the machine associated with the access point and holding no address. Diagram 22 |
 
 ---
 
@@ -1356,6 +1358,86 @@ The CLI terminal stays dark in **both** themes and has its own theme-invariant
 
 ---
 
+## 22. The repair path — a machine that is already broken
+
+`backend/lab_doctor.py:283`. The prevention is diagram 4 and 5; this is what
+runs on a machine the prevention did not reach — one that ran the old code,
+or one where a network was created by something else.
+
+The question mark has **two** faults, and this is the diagram that makes that
+explicit. The bad route is the loud one: the machine's traffic goes to its
+router through the bridge. The quiet one is the lease: the DHCP request that
+failed while the bad route was in place has to be made again, because
+NetworkManager is left holding *no address at all* — and the route can be
+perfectly correct while the connection still will not come up.
+
+```mermaid
+flowchart TD
+    START["lab_doctor.py --fix"] --> MINE["host_network_details(refresh=True)<br/>the machine's own networks<br/>and the interface each came from"]
+    MINE --> IFACE["_wireless_interface()<br/>the wl* interface carrying it"]
+    MINE --> LIST["client.networks.list()"]
+
+    LIST --> POOL["for each network, each IPAM subnet"]
+    POOL --> CONFLICT{"conflict_for(subnet,<br/>the machine's networks)?<br/>does the pool overlap<br/>one of them?"}
+    CONFLICT -- no --> POOL
+    CONFLICT -- yes --> CLASH["a clash"]
+
+    CLASH --> OURS{"_is_lab_network?<br/>compose project is 'netrouteai',<br/>or the name starts 'netrouteai_n'"}
+    OURS -- "no — not the lab's" --> ADVICE["print _advice(network)<br/>how to move it:<br/>APP_SUBNET=… for the app stack,<br/>default-address-pools for docker0"]
+    OURS -- yes --> FIX{"--fix?"}
+    FIX -- no --> REPORT["report only.<br/>The route it added is why<br/>the machine has no connection."]
+    FIX -- yes --> DETACH["_detach(network)<br/>remove the containers on it<br/>(Docker refuses to delete<br/>a network with an endpoint)"]
+    DETACH --> RM["network.remove()"]
+    RM --> REMOVED["removed:<br/>the route it added is gone"]
+
+    REMOVED --> RESEAT["_reseat_connection(iface)"]
+    NOFIX["--reseat on its own"] --> RESEAT
+
+    RESEAT --> PROFILE{"_active_profile(iface)<br/>the NetworkManager profile<br/>currently in use?"}
+    PROFILE -- yes --> DOWN["nmcli con down '&lt;profile&gt;'<br/>nmcli con up '&lt;profile&gt;'"]
+    PROFILE -- no --> DEVICE["nmcli device disconnect &lt;iface&gt;<br/>nmcli device connect &lt;iface&gt;"]
+    DOWN -- "it failed" --> DEVICE
+    DOWN -- ok --> WAIT
+    DEVICE --> WAIT{"does the interface hold<br/>an address now?<br/>(up to 10 s)"}
+    WAIT -- yes --> OK["repaired:<br/>the address, the route and<br/>the internet are back"]
+    WAIT -- no --> FAIL["say so plainly:<br/>the router may be slow,<br/>or the connection needs<br/>to be selected by hand"]
+
+    style REMOVED fill:#fdf0e6,stroke:#b5651d
+    style OK fill:#e8f4f8,stroke:#0d6e85
+    style FAIL fill:#fbe4e4,stroke:#a02020
+```
+
+### Why the re-seat is not optional
+
+Fixing the route and stopping there leaves a machine that is associated with
+the access point and holds no address. That is the question mark, and it is
+what the user sees. The DHCP request that failed while the bad route was in
+place never got an answer, and nothing asks again on its own — NetworkManager
+has already backed off.
+
+Verified live on the machine this was reported from: a bridge deliberately
+created on the machine's own LAN took the gateway address
+(`inet 192.168.31.1/24 dev br-…`) and the internet went dead
+(`HTTP 000`). One `./start.sh --doctor` brought back the address, the route
+and the internet.
+
+### Why a failed step is not reported as a fault
+
+Bringing the profile up can fail with *"The base network connection was
+interrupted"* while the device-level fallback succeeds and the address
+arrives. Printing that error on a successful repair is noise that reads as
+a fault, so the doctor reports a step's failure only when the address never
+turns up.
+
+### Why the app stack's network is not the lab's
+
+`_is_lab_network` matches the compose **project label** exactly, or the
+`netrouteai_n` name prefix. A name match on `"netrouteai"` would also match
+`netrouteai-app_default` — the network the running UI depends on — and the
+doctor would take the application down with it.
+
+---
+
 ## Appendix — the verification commands each diagram rests on
 
 So a reader can confirm a diagram is still true:
@@ -1366,4 +1448,27 @@ backend/venv/bin/python /tmp/opencode/final_verify.py   # 29/29 end-to-end check
 python3 scripts/audit_contrast.py                       # 156 pairings, 0 failing
 cd frontend && npm run lint                             # tsc --noEmit
 cd frontend && npm run build
+```
+
+# Diagrams 5, 22 — the machine's own networks, and the repair
+backend/venv/bin/python backend/test_host_networks.py   # every check passes
+./start.sh --doctor                                     # report only
+./start.sh --reseat                                     # the lease half alone
+```
+
+To see the repair do its work, break the machine on purpose and watch it come
+back. Use **your own** subnet — the one on the interface you are connected by:
+
+```bash
+# find your own subnet
+ip -4 -o addr show scope global | awk '{print $2, $4}'
+
+# break it: a bridge that claims it (this is what the old lab did)
+docker network create --subnet 192.168.31.0/24 netrouteai_n99
+
+# the internet is now dead, and the wifi icon shows a question mark
+curl -s -o /dev/null -w '%{http_code}\n' https://api.github.com
+
+# repair: one command, and the address, the route and the internet come back
+./start.sh --doctor
 ```

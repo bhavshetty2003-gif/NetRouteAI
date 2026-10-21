@@ -14,7 +14,7 @@ Multi-package monorepo — each subproject has its own dependency manifest:
 | `shortest-path-demo/` | 5-router shortest-path demo |
 | `scripts/` | Maintenance utilities (`migrate_theme.py`, `audit_contrast.py`) |
 
-Root `README.md` and `requirements.txt` are intentionally empty. `tests/` and `database/` are empty placeholders. `docs/` holds `ALGORITHM_FLOWCHARTS.md` — 21 Mermaid flowcharts transcribed from the running code, with a source reference per diagram; update it when an algorithm changes.
+Root `README.md` and `requirements.txt` are intentionally empty. `tests/` and `database/` are empty placeholders. `docs/` holds `ALGORITHM_FLOWCHARTS.md` — 22 Mermaid flowcharts transcribed from the running code, with a source reference per diagram; update it when an algorithm changes.
 
 ## Commands
 
@@ -28,6 +28,7 @@ Root `README.md` and `requirements.txt` are intentionally empty. `tests/` and `d
 ./start.sh --stop       # stop the API and UI; the lab is left alone
 ./start.sh --doctor     # find the Docker networks taking this machine's own
                         # network, and remove the lab's
+./start.sh --reseat     # ask this machine's own network for an address again
 ```
 
 It installs what is missing (backend venv from `requirements.txt`, `node_modules`
@@ -108,6 +109,7 @@ python test_training.py        # verify training pipeline (no Docker needed)
 python test_host_networks.py   # verify the lab keeps off this machine's networks
 python lab_doctor.py           # report the Docker networks clashing with this machine
 python lab_doctor.py --fix     # ...and remove the lab's
+python lab_doctor.py --reseat  # only ask this machine's network for an address again
 ```
 
 `bcrypt` and `cryptography` are new runtime requirements (account hashing and
@@ -270,6 +272,8 @@ Verified with `frontend/.harness/` (`npm run test:auth`, `test:gate`, `test:goog
   - **The lab's own networks are excluded from the reserved set by compose *project*, not by name**, because the lab removes its resources before every deploy, so those subnets are free again — counting them would make the plan depend on whether a lab happened to be running. Other projects' pools (the app stack) *are* included, to avoid `invalid pool request: Pool overlaps with other one on this address space`.
   - **The app stack's own network is pinned to `198.18.0.0/15`** (RFC 2544 benchmarking range, outside Docker's automatic pool and outside every lab address class) via `APP_SUBNET`, because Docker's automatic pool starts at `172.17.0.0/16` and moves — and a pool that happened to be the machine's LAN breaks it the same way the lab's did.
   - **`./start.sh --doctor` is the repair for a machine that is already broken.** It reports every Docker network using a network the machine is on, removes the lab's (detaching their containers first, because Docker refuses to delete a network with an endpoint attached), and for the ones it will not remove it says *how* to move them: the app stack needs `APP_SUBNET=… docker compose up -d --build`, and Docker's own default bridge needs `default-address-pools` in `/etc/docker/daemon.json`.
+  - **The question mark has *two* faults, and fixing only the route does not clear it.** The bad route stops the machine reaching its router; that is the half that `docker network rm` fixes. The other half is the lease: the DHCP request that failed while the bad route was in place never got an answer, so NetworkManager is left with the machine *associated with the access point and holding no address* — which is exactly what the question mark means. Putting the route right does not make the lease arrive; the request has to be made again. So `--fix` also re-runs it (`nmcli con down/up`, falling back to `nmcli device disconnect/connect`), and `./start.sh --reseat` does that half alone for the machine whose route is already correct and whose connection still will not come up. Verified live: a bridge deliberately created on the machine's own LAN took the gateway address, killed the internet (HTTP 000), and one `./start.sh --doctor` brought back the address, the route and the internet.
+  - **A step that failed on the way to a working connection is not a fault.** Bringing the profile up can fail with "The base network connection was interrupted" while the device-level fallback succeeds and the address arrives. The doctor therefore reports the error only when the address *never* turns up — otherwise a successful repair prints a scary line about a step that did not matter.
 - **`list(subnet.hosts())` on a Class A /8 cost 4.19 s and 1.68 GB of RSS per link.** It materialises sixteen million addresses to take two of them. `_first_hosts()` pulls the same two addresses from the generator, and a 12-router topology now plans in 0.01 s.
 - **The allocator is stateless, which is what makes deletion free.** A subnet is "taken" only by the topology currently being planned, and each class scans its candidates from the start. There is no pool to drain and nothing to release, so deleting a link or a router hands its address straight back to the next link that needs one. Verified: deleting link l5 (R11–R12, `192.168.3.0/24`) gives `192.168.3.0/24` to the next link, deleting router R12 releases both its subnets, and drawing R12 back returns both.
 - **A link with no area of its own inherits its source router's area**, and each router gets one headline `ip` (its lowest interface address) which no two routers may present at once.
