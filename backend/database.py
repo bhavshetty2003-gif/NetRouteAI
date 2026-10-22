@@ -45,24 +45,6 @@ def init_db():
         )
     """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS training_samples (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            topology_id TEXT,
-            source TEXT NOT NULL,
-            destination TEXT NOT NULL,
-            path TEXT NOT NULL,
-            algorithm TEXT NOT NULL,
-            latency_ms REAL NOT NULL,
-            bandwidth_mbps REAL NOT NULL,
-            packet_loss_percent REAL NOT NULL,
-            hop_count INTEGER NOT NULL,
-            convergence_time_ms REAL NOT NULL,
-            throughput_mbps REAL NOT NULL,
-            timestamp TEXT NOT NULL
-        )
-    """)
-
     # Migrations for databases created before these columns existed
     existing = {r["name"] for r in cursor.execute("PRAGMA table_info(network_metrics)")}
     for column, ddl in (
@@ -72,6 +54,12 @@ def init_db():
     ):
         if column not in existing:
             cursor.execute(ddl)
+
+    # The routing_samples table held one row per modelled route the designer
+    # asked for. Those routes were computed on the canvas, not measured, and
+    # the endpoint that read them was never called by the UI, so the table was
+    # written and never read. It goes with the endpoints.
+    cursor.execute("DROP TABLE IF EXISTS training_samples")
 
     cursor.execute("SELECT COUNT(*) FROM network_metrics")
     if cursor.fetchone()[0] == 0:
@@ -133,32 +121,6 @@ def seed_training_data(cursor):
     """, samples)
 
 
-def insert_training_sample(topology_id, source, destination, path, algorithm, metrics):
-    """Insert a training sample from a routing result."""
-    conn = get_db()
-    conn.execute("""
-        INSERT INTO training_samples
-        (topology_id, source, destination, path, algorithm, latency_ms, bandwidth_mbps,
-         packet_loss_percent, hop_count, convergence_time_ms, throughput_mbps, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        topology_id,
-        source,
-        destination,
-        ",".join(path),
-        algorithm,
-        metrics.get("latency", 0),
-        metrics.get("bandwidth", 0),
-        metrics.get("packet_loss", 0) * 100,
-        metrics.get("hop_count", 0),
-        metrics.get("convergence_time", 0),
-        metrics.get("throughput", 0),
-        datetime.now().isoformat(),
-    ))
-    conn.commit()
-    conn.close()
-
-
 def get_training_data(origin: str | None = None):
     """Get the Random Forest training set.
 
@@ -182,16 +144,6 @@ def get_training_data(origin: str | None = None):
     return [list(r[:6]) for r in rows], [r[6] for r in rows]
 
 
-def get_training_samples(limit: int = 100):
-    """Get the most recent routing samples."""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM training_samples ORDER BY timestamp DESC LIMIT ?", (limit,)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
 def insert_network_metrics(
     latency, packet_loss, bandwidth, hop_count, link_cost, congestion, label,
     topology_id=None, topology_type=None, origin="measured",
@@ -213,12 +165,21 @@ def insert_network_metrics(
 
 
 def record_measurement(measurement: dict, topology_type: str = "lab") -> None:
-    """Store one real measurement from the running lab as a training row."""
+    """Store one real measurement from the running lab as a training row.
+
+    A row without a throughput number is refused rather than written with a
+    placeholder. The Random Forest is handed two constant columns and learns
+    nothing from them, so a "measured" row carrying 1000 Mbps on every line is
+    worse than no row at all.
+    """
+    bandwidth = measurement.get("bandwidth_mbps")
+    if bandwidth is None:
+        return
     insert_network_metrics(
         latency=measurement["latency_ms"],
         packet_loss=measurement["packet_loss_percent"],
-        bandwidth=measurement.get("bandwidth_mbps", 1000),
-        hop_count=measurement.get("hop_count", 1),
+        bandwidth=bandwidth,
+        hop_count=measurement.get("hop_count") or 1,
         link_cost=int(measurement.get("total_cost", 1)),
         congestion=measurement.get("congestion_level", 0.0),
         label=classify(
@@ -245,7 +206,6 @@ def dataset_stats() -> dict:
     labels = conn.execute(
         "SELECT label, COUNT(*) AS n FROM network_metrics GROUP BY label"
     ).fetchall()
-    samples = conn.execute("SELECT COUNT(*) FROM training_samples").fetchone()[0]
     conn.close()
 
     total = row["total"] or 0
@@ -255,6 +215,5 @@ def dataset_stats() -> dict:
         "synthetic": row["synthetic"] or 0,
         "measured_ratio": round((row["measured"] or 0) / total, 4) if total else 0.0,
         "labels": {r["label"]: r["n"] for r in labels},
-        "training_samples": samples,
         "ready_for_training": total >= 100,
     }

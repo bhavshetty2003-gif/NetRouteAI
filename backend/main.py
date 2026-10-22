@@ -44,14 +44,11 @@ from ai_route_service import (
     recommend_route,
     upload_topology,
 )
-from analytics_service import compare_algorithms
 from convergence import measure_convergence
 from database import (
     dataset_stats,
     get_training_data,
-    get_training_samples,
     init_db,
-    insert_training_sample,
     record_measurement,
 )
 from lab_deploy import (
@@ -75,8 +72,6 @@ from metrics_collector import (
     set_link_state,
 )
 from models import (
-    AnalyticsCompareRequest,
-    AnalyticsCompareResponse,
     ConvergenceRequest,
     DeployRequest,
     ImpairRequest,
@@ -88,20 +83,12 @@ from models import (
     RouteRecommendationRequest,
     RouteRecommendationResponse,
     RouteSteerRequest,
-    RoutingRequest,
-    RoutingResponse,
-    SimulationRequest,
-    SimulationResponse,
-    TopologyCreateRequest,
-    TopologyCreateResponse,
     TrafficRequest,
     UploadTopologyRequest,
     UploadTopologyResponse,
 )
 from ospf_ai_service import compare_ospf_vs_ai, invalidate_link_conditions, path_for_method
 from route_steer import apply_steer, revert_steer, static_routes, steer_plan  # noqa: F401
-from routing_service import dijkstra_route, get_topology, random_forest_route, store_topology
-from simulation_service import simulate_packets
 
 logger = logging.getLogger("netroute.dataset")
 # Plan/deploy refusals go to the log as well as the response. A 400 whose
@@ -122,8 +109,10 @@ app = FastAPI(
     description="Real network telemetry from a live Docker/FRR OSPF lab.",
 )
 
-# In-memory topology store keyed by topology_id
-topologies_store: dict[str, dict] = {}
+# The uploaded topology lives in `ai_route_service.CURRENT_TOPOLOGY`; there is
+# no second copy of it here. A second store was kept for the endpoints that
+# read a topology by id, and those endpoints were removed because the only
+# thing they could answer was a modelled route.
 
 STARTED_AT = time.time()
 
@@ -209,27 +198,21 @@ def upload_topology_endpoint(request: UploadTopologyRequest):
     topology = request.topology.model_dump()
     validation = validate_topology(topology)
     topology_id = upload_topology(topology)
-    topologies_store[topology_id] = topology
     return UploadTopologyResponse(
-        status="success", topology_id=topology_id, validation=validation
-    )
-
-
-@app.post("/api/topology/create", response_model=TopologyCreateResponse)
-def create_topology(request: TopologyCreateRequest):
-    """Create and store a topology."""
-    topology = request.topology.model_dump()
-    validation = validate_topology(topology)
-    topology_id = store_topology(topology)
-    topologies_store[topology_id] = topology
-    return TopologyCreateResponse(
         status="success", topology_id=topology_id, validation=validation
     )
 
 
 @app.post("/api/routing/recommend", response_model=RouteRecommendationResponse)
 def route_recommendation(request: RouteRecommendationRequest):
-    """Random Forest route recommendation for the uploaded topology."""
+    """Recommend a route for the uploaded topology.
+
+    The path itself is chosen by the Random Forest when the running lab really
+    is this canvas; the latency, loss and throughput that come with it are then
+    measured on that lab. With no matching lab running, the cheapest path by
+    the cost the designer set is returned and nothing is claimed to have been
+    measured.
+    """
     topology_id, topology = get_current_topology()
     if not topology or topology_id != request.topology_id:
         raise HTTPException(
@@ -307,7 +290,20 @@ def lab_deploy(request: DeployRequest):
 @app.post("/api/lab/deploy/teardown")
 def lab_deploy_teardown():
     """Stop the generated lab and remove its files and networks."""
-    return teardown()
+    # The background traffic generators are `ping` loops running *inside* the
+    # containers. Tearing the lab down without stopping them first left them
+    # running against containers that were about to disappear, and their
+    # counters kept inflating after the lab was gone.
+    from traffic import stop_all as stop_traffic
+
+    try:
+        stopped = stop_traffic(_client())
+    except Exception:  # noqa: BLE001
+        # Failing to stop a generator must never prevent the teardown itself.
+        stopped = {"stopped": []}
+    result = teardown()
+    result["traffic_stopped"] = stopped.get("stopped", [])
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -972,18 +968,19 @@ def dataset_collect(request: LiveAnalyticsRequest, background_tasks: BackgroundT
     if not lab["online"]:
         raise _lab_error(LabUnavailable(lab.get("error") or "Lab not running"))
 
-    from dataset_collector import collect
+    from dataset_collector import PROFILES, collect
 
     def _run() -> None:
         collect(max_pairs=request.max_pairs, on_progress=_log_dataset_progress)
 
     background_tasks.add_task(_run)
+    names = ", ".join(profile["name"] for profile in PROFILES)
     return {
         "status": "started",
         "pairs_requested": request.max_pairs,
         "message": (
-            f"Measuring up to {request.max_pairs} router pairs across 4 real "
-            "network conditions (clean, mild, heavy, loaded)"
+            f"Measuring up to {request.max_pairs} router pairs across "
+            f"{len(PROFILES)} real network conditions ({names})"
         ),
     }
 
@@ -1006,100 +1003,6 @@ def _move_key(device: str, interface: str, area: str) -> tuple[str, str, str]:
 
     return (device.upper(), interface, format_area(normalise_area(area)))
 
-
-@app.get("/api/train/samples")
-def train_samples():
-    """Most recent routing samples."""
-    samples = get_training_samples()
-    return {"samples": samples, "count": len(samples)}
-
-
-# --------------------------------------------------------------------------- #
-# Model-based routing (kept for the designer's routing tools)
-# --------------------------------------------------------------------------- #
-@app.post("/api/routing/dijkstra", response_model=RoutingResponse)
-def routing_dijkstra(request: RoutingRequest):
-    """Shortest path on the topology model, enriched with measured metrics
-    when the same device names exist in the running lab."""
-    topology = get_topology(request.topology_id, topologies_store)
-    if not topology:
-        raise HTTPException(status_code=404, detail=f"Topology '{request.topology_id}' not found")
-
-    result = dijkstra_route(topology, request.source, request.destination)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-
-    # Overlay real measurements when the lab has these devices
-    try:
-        live = measure_path(
-            request.source, request.destination, count=4, include_traceroute=True
-        )
-        result["metrics"]["latency"] = live["latency_ms"]
-        result["metrics"]["packet_loss"] = live["packet_loss_percent"] / 100
-        result["metrics"]["jitter_ms"] = live["jitter_ms"]
-        result["measured"] = True
-    except LabUnavailable:
-        result["measured"] = False
-
-    insert_training_sample(
-        request.topology_id, request.source, request.destination,
-        result["path"], "dijkstra", result["metrics"],
-    )
-    return RoutingResponse(**result)
-
-
-@app.post("/api/routing/random-forest", response_model=RoutingResponse)
-def routing_random_forest(request: RoutingRequest):
-    """Random Forest route selection on the topology model."""
-    topology = get_topology(request.topology_id, topologies_store)
-    if not topology:
-        raise HTTPException(status_code=404, detail=f"Topology '{request.topology_id}' not found")
-
-    result = random_forest_route(topology, request.source, request.destination)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-
-    try:
-        live = measure_path(
-            request.source, request.destination, count=4, include_traceroute=True
-        )
-        result["metrics"]["latency"] = live["latency_ms"]
-        result["metrics"]["packet_loss"] = live["packet_loss_percent"] / 100
-        result["metrics"]["jitter_ms"] = live["jitter_ms"]
-        result["measured"] = True
-    except LabUnavailable:
-        result["measured"] = False
-
-    insert_training_sample(
-        request.topology_id, request.source, request.destination,
-        result["path"], "random_forest", result["metrics"],
-    )
-    return RoutingResponse(**result)
-
-
-@app.post("/api/simulation/send-packets", response_model=SimulationResponse)
-def send_packets(request: SimulationRequest):
-    """Simulate packet transmission through the topology model."""
-    topology = get_topology(request.topology_id, topologies_store)
-    if not topology:
-        raise HTTPException(status_code=404, detail=f"Topology '{request.topology_id}' not found")
-
-    result = simulate_packets(
-        topology, request.source, request.destination,
-        request.packet_count, request.packet_size, request.algorithm,
-    )
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    return SimulationResponse(**result)
-
-
-@app.post("/api/analytics/compare", response_model=AnalyticsCompareResponse)
-def analytics_compare(request: AnalyticsCompareRequest):
-    """Compare Dijkstra vs Random Forest on the topology model."""
-    topology = get_topology(request.topology_id, topologies_store)
-    if not topology:
-        raise HTTPException(status_code=404, detail=f"Topology '{request.topology_id}' not found")
-    return AnalyticsCompareResponse(**compare_algorithms(topology, request.source, request.destination))
 
 
 # The UI and this API are different origins only in development: Vite serves

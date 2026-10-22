@@ -1,254 +1,253 @@
 #!/usr/bin/env python3
 """
-Test script to verify the real network training pipeline.
+Test the parts of the backend that decide what the product claims.
 
-This script:
-1. Generates a small number of topologies (5)
-2. Verifies the database is working
-3. Tests the metrics collection (without Docker)
-4. Verifies the training pipeline
+The rule this project runs on is that every number a user sees traces back to
+something real. Three things enforce it, and this script checks all three:
+
+  1. the training set is split into measured rows and the synthetic bootstrap,
+     and the model is fitted on the measured ones whenever they exist;
+  2. a link that has never been measured produces *no* metric, rather than a
+     plausible default;
+  3. a row that could not produce a throughput number is not written at all.
+
+It runs against a temporary database, so it never touches the rows the running
+lab has collected.
 
 Usage:
     python test_training.py
 """
 
-import json
 import os
 import sys
-import sqlite3
-from pathlib import Path
+import tempfile
 
-# Add backend to path
 sys.path.insert(0, os.path.dirname(__file__))
 
-from database import init_db, get_db, insert_network_metrics, get_training_data
-from topology_generator import generate_topologies, save_topologies, load_topologies
+import database
+from ai_route_service import _fit_random_forest, rank_by_cost
+from routing_service import build_graph, calculate_metrics
+
+FAILURES: list[str] = []
 
 
-def test_topology_generation():
-    """Test topology generation."""
-    print("=" * 60)
-    print("TEST 1: Topology Generation")
-    print("=" * 60)
-    
-    topologies = generate_topologies(count=5, seed=42)
-    
-    print(f"✓ Generated {len(topologies)} topologies")
-    
-    for topo in topologies:
-        devices = len(topo.get('devices', []))
-        links = len(topo.get('links', []))
-        print(f"  - {topo['id']}: {devices} devices, {links} links, type={topo.get('type', 'unknown')}")
-    
-    # Save and load
-    save_topologies(topologies, "test_topologies")
-    loaded = load_topologies("test_topologies")
-    
-    assert len(loaded) == 5, f"Expected 5 topologies, got {len(loaded)}"
-    print(f"✓ Saved and loaded {len(loaded)} topologies")
-    
-    return topologies
+def check(condition: bool, message: str) -> None:
+    if condition:
+        print(f"  ok    {message}")
+    else:
+        print(f"  FAIL  {message}")
+        FAILURES.append(message)
 
 
-def test_database():
-    """Test database operations."""
-    print("\n" + "=" * 60)
-    print("TEST 2: Database Operations")
-    print("=" * 60)
-    
-    init_db()
-    
-    # Insert test metrics
-    for i in range(10):
-        insert_network_metrics(
-            latency=10.0 + i,
-            packet_loss=0.1 + i * 0.01,
-            bandwidth=100.0 + i * 10,
-            hop_count=i + 1,
-            link_cost=10 + i,
-            congestion=0.1 + i * 0.05,
-            label=["Low", "Medium", "High"][i % 3]
+def use_temporary_database() -> str:
+    """Point the database at a scratch file so the real rows are untouched."""
+    handle, path = tempfile.mkstemp(prefix="netrouteai-test-", suffix=".db")
+    os.close(handle)
+    database.DB_PATH = path
+    return path
+
+
+def test_origin_split() -> None:
+    print("\n" + "=" * 68)
+    print("The training set knows which rows were measured")
+    print("=" * 68)
+
+    database.init_db()
+
+    # The bootstrap set exists so a fresh install has something to fit on.
+    seeded, seeded_labels = database.get_training_data(origin="synthetic")
+    check(len(seeded) > 0, f"the synthetic bootstrap set was seeded ({len(seeded)} rows)")
+    check(len(seeded_labels) == len(seeded), "every seeded row has a label")
+
+    measured, _ = database.get_training_data(origin="measured")
+    check(len(measured) == 0, "no measured rows exist yet in a fresh database")
+
+    database.insert_network_metrics(
+        latency=12.5,
+        packet_loss=0.2,
+        bandwidth=240.0,
+        hop_count=3,
+        link_cost=30,
+        congestion=0.2,
+        label="Low",
+        origin="measured",
+    )
+    measured, _ = database.get_training_data(origin="measured")
+    check(len(measured) == 1, "a measured row is visible under origin='measured'")
+
+    everything, _ = database.get_training_data()
+    check(
+        len(everything) == len(seeded) + 1,
+        "the unfiltered set is the measured rows plus the bootstrap",
+    )
+
+
+def test_model_prefers_measured_rows() -> None:
+    print("\n" + "=" * 68)
+    print("The model is fitted on the measured rows when there are any")
+    print("=" * 68)
+
+    # Only one measured row is not enough to fit on, so add enough of them.
+    for index in range(20):
+        database.insert_network_metrics(
+            latency=1.0 + index,
+            packet_loss=0.1 * index,
+            bandwidth=100.0 + index * 10,
+            hop_count=1 + index % 5,
+            link_cost=10 + index,
+            congestion=0.05 * index,
+            label=["Low", "Medium", "High"][index % 3],
+            origin="measured",
         )
-    
-    # Query metrics
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM network_metrics")
-    count = cursor.fetchone()[0]
-    conn.close()
-    
-    print(f"✓ Inserted 10 test metrics")
-    print(f"✓ Database now has {count} total metrics")
-    
-    # Get training data
-    X, y = get_training_data()
-    print(f"✓ Training data: {len(X)} samples, {len(y)} labels")
-    
-    assert len(X) >= 10, f"Expected at least 10 samples, got {len(X)}"
-    
-    return True
+
+    rf, basis = _fit_random_forest()
+    check(rf is not None, "the model was fitted")
+    check("measured" in basis, f"the basis names the measured rows ({basis})")
+
+    # With the cache warm, the same basis comes back.
+    _rf_again, basis_again = _fit_random_forest()
+    check(basis_again == basis, "the fitted model is reused with the same basis")
 
 
-def test_metrics_collection():
-    """Test metrics collection (without Docker)."""
-    print("\n" + "=" * 60)
-    print("TEST 3: Metrics Collection (Simulated)")
-    print("=" * 60)
-    
-    from real_metrics_collector import collect_ping_metrics
-    
-    # Test ping metrics collection
-    print("Testing ping metrics collection...")
-    print("  (Skipping actual ping - Docker not available in test mode)")
-    
-    # Simulate metrics
-    simulated_metrics = {
-        "latency_ms": 15.5,
-        "packet_loss_percent": 0.5,
-        "bandwidth_mbps": 100.0,
-        "hop_count": 3,
-        "link_cost": 20,
-        "congestion_level": 0.3,
-        "label": "Low"
-    }
-    
-    print(f"✓ Simulated metrics: {simulated_metrics}")
-    
-    return True
+def test_unknown_metrics_are_absent() -> None:
+    print("\n" + "=" * 68)
+    print("A link that was never measured produces no metric")
+    print("=" * 68)
 
-
-def test_training_pipeline():
-    """Test the full training pipeline."""
-    print("\n" + "=" * 60)
-    print("TEST 4: Training Pipeline")
-    print("=" * 60)
-    
-    from sklearn.ensemble import RandomForestClassifier
-    import numpy as np
-    
-    # Get training data
-    X, y = get_training_data()
-    
-    if len(X) < 10:
-        print("⚠ Not enough data for training (need at least 10 samples)")
-        return False
-    
-    # Train a simple model
-    X = np.array(X)
-    y = np.array(y)
-    
-    rf = RandomForestClassifier(n_estimators=10, random_state=42)
-    rf.fit(X, y)
-    
-    print(f"✓ Trained Random Forest on {len(X)} samples")
-    print(f"✓ Classes: {rf.classes_}")
-    print(f"✓ Feature importances: {rf.feature_importances_}")
-    
-    return True
-
-
-def test_docker_compose_generation():
-    """Test Docker Compose file generation."""
-    print("\n" + "=" * 60)
-    print("TEST 5: Docker Compose Generation")
-    print("=" * 60)
-    
-    from docker_compose_generator import generate_compose_file, generate_frr_config
-    
-    # Create a simple test topology
-    test_topology = {
-        "id": "test_topo",
-        "type": "star",
+    topology = {
         "devices": [
-            {"id": "R1", "type": "router", "ip_address": "10.0.0.1"},
-            {"id": "R2", "type": "router", "ip_address": "10.0.0.2"},
-            {"id": "SW1", "type": "switch", "ip_address": "10.0.0.3"}
+            {"id": "R1", "type": "router"},
+            {"id": "R2", "type": "router"},
         ],
         "links": [
-            {"source": "R1", "target": "R2", "cost": 10, "bandwidth": 100, "latency": 5, "loss_probability": 0.01},
-            {"source": "R1", "target": "SW1", "cost": 5, "bandwidth": 100, "latency": 2, "loss_probability": 0.005}
-        ]
+            # A canvas link carries a cost and nothing else.
+            {"source": "R1", "target": "R2", "cost": 10},
+        ],
     }
-    
-    output_dir = "test_docker_output"
-    os.makedirs(output_dir, exist_ok=True)
-    
-    try:
-        generate_compose_file(test_topology, output_dir)
-        print(f"✓ Generated docker-compose.yml")
-        
-        generate_frr_config("R1", test_topology, output_dir)
-        print(f"✓ Generated FRR config for R1")
-        
-        # Check files exist
-        compose_file = os.path.join(output_dir, "docker-compose.yml")
-        if os.path.exists(compose_file):
-            print(f"✓ docker-compose.yml exists")
-        else:
-            print(f"✗ docker-compose.yml not found")
-            
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
-    
-    return True
+    graph = build_graph(topology)
+    edge = graph["R1"]["R2"]
+    check("bandwidth" not in edge, "no bandwidth was invented for the link")
+    check("latency" not in edge, "no latency was invented for the link")
+    check("loss_probability" not in edge, "no loss was invented for the link")
+    check(edge["cost"] == 10, "the cost the designer set is kept")
+
+    metrics = calculate_metrics(graph, ["R1", "R2"])
+    check(metrics["latency"] is None, "the latency is absent rather than 10 ms")
+    check(metrics["bandwidth"] is None, "the bandwidth is absent rather than 100 Mbps")
+    check(metrics["packet_loss"] is None, "the loss is absent rather than 1%")
+    check(metrics["throughput"] is None, "throughput is never derived from a graph")
+    check(metrics["convergence_time"] is None, "convergence is never derived from a graph")
+    check(metrics["hop_count"] == 1, "the hop count is real")
+    check(metrics["total_cost"] == 10, "the total cost is real")
+
+    # A path with one measured hop and one unmeasured hop has no end-to-end
+    # figure at all, rather than an average of the hop that answered.
+    two_hop = {
+        "devices": [
+            {"id": "R1", "type": "router"},
+            {"id": "R2", "type": "router"},
+            {"id": "R3", "type": "router"},
+        ],
+        "links": [
+            {"source": "R1", "target": "R2", "cost": 10, "latency": 4.0},
+            {"source": "R2", "target": "R3", "cost": 10},
+        ],
+    }
+    partial = calculate_metrics(build_graph(two_hop), ["R1", "R2", "R3"])
+    check(partial["latency"] is None, "a partially measured path has no latency")
+    check(partial["total_cost"] == 20, "its cost is still known")
 
 
-def main():
-    """Run all tests."""
-    print("\n" + "=" * 60)
-    print("REAL NETWORK TRAINING PIPELINE TEST")
-    print("=" * 60)
-    
-    results = []
-    
+def test_cost_ranking() -> None:
+    print("\n" + "=" * 68)
+    print("With no lab, the cheapest path by the drawn cost is chosen")
+    print("=" * 68)
+
+    topology = {
+        "devices": [
+            {"id": "R1", "type": "router"},
+            {"id": "R2", "type": "router"},
+            {"id": "R3", "type": "router"},
+        ],
+        "links": [
+            {"source": "R1", "target": "R2", "cost": 10},
+            {"source": "R2", "target": "R3", "cost": 10},
+            {"source": "R1", "target": "R3", "cost": 50},
+        ],
+    }
+    ranked = rank_by_cost(build_graph(topology), "R1", "R3")
+    check("error" not in ranked, "a route was found")
+    check(
+        ranked["best"]["path"] == ["R1", "R2", "R3"],
+        "the cheaper of the two paths won",
+    )
+    check(ranked["confidence"] == 0, "no confidence is claimed without a model")
+    check(
+        ranked["best"]["estimated_latency_ms"] is None,
+        "no latency is estimated without a lab",
+    )
+
+
+def test_rows_without_throughput_are_refused() -> None:
+    print("\n" + "=" * 68)
+    print("A row that could not be measured is not written")
+    print("=" * 68)
+
+    before, _ = database.get_training_data(origin="measured")
+    database.record_measurement(
+        {
+            "latency_ms": 4.0,
+            "packet_loss_percent": 0.0,
+            "hop_count": 2,
+            "total_cost": 20,
+            "congestion_level": 0.1,
+        }
+    )
+    after, _ = database.get_training_data(origin="measured")
+    check(
+        len(after) == len(before),
+        "a measurement with no throughput number added no row",
+    )
+
+    database.record_measurement(
+        {
+            "latency_ms": 4.0,
+            "packet_loss_percent": 0.0,
+            "bandwidth_mbps": 120.0,
+            "hop_count": 2,
+            "total_cost": 20,
+            "congestion_level": 0.1,
+        }
+    )
+    final, _ = database.get_training_data(origin="measured")
+    check(len(final) == len(before) + 1, "a fully measured row was written")
+
+
+def main() -> int:
+    print("=" * 68)
+    print("What the backend claims")
+    print("=" * 68)
+
+    path = use_temporary_database()
     try:
-        results.append(("Topology Generation", test_topology_generation()))
-    except Exception as e:
-        print(f"✗ Topology Generation failed: {e}")
-        results.append(("Topology Generation", False))
-    
-    try:
-        results.append(("Database Operations", test_database()))
-    except Exception as e:
-        print(f"✗ Database Operations failed: {e}")
-        results.append(("Database Operations", False))
-    
-    try:
-        results.append(("Metrics Collection", test_metrics_collection()))
-    except Exception as e:
-        print(f"✗ Metrics Collection failed: {e}")
-        results.append(("Metrics Collection", False))
-    
-    try:
-        results.append(("Training Pipeline", test_training_pipeline()))
-    except Exception as e:
-        print(f"✗ Training Pipeline failed: {e}")
-        results.append(("Training Pipeline", False))
-    
-    try:
-        results.append(("Docker Compose Generation", test_docker_compose_generation()))
-    except Exception as e:
-        print(f"✗ Docker Compose Generation failed: {e}")
-        results.append(("Docker Compose Generation", False))
-    
-    # Summary
-    print("\n" + "=" * 60)
-    print("TEST SUMMARY")
-    print("=" * 60)
-    
-    for name, passed in results:
-        status = "✓ PASS" if passed else "✗ FAIL"
-        print(f"  {status}: {name}")
-    
-    all_passed = all(passed for _, passed in results)
-    
-    if all_passed:
-        print("\n✓ All tests passed!")
-        return 0
-    else:
-        print("\n✗ Some tests failed")
+        test_origin_split()
+        test_model_prefers_measured_rows()
+        test_unknown_metrics_are_absent()
+        test_cost_ranking()
+        test_rows_without_throughput_are_refused()
+    finally:
+        database.DB_PATH = os.path.join(os.path.dirname(__file__), "training_data.db")
+        if os.path.exists(path):
+            os.unlink(path)
+
+    print("\n" + "=" * 68)
+    if FAILURES:
+        print(f"{len(FAILURES)} check(s) failed:")
+        for failure in FAILURES:
+            print(f"  - {failure}")
         return 1
+    print("all checks passed")
+    return 0
 
 
 if __name__ == "__main__":

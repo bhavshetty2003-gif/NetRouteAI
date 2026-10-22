@@ -20,68 +20,20 @@ class Link(BaseModel):
     target_ip: Optional[str] = None
     target_subnet: Optional[str] = None
     cost: Optional[int] = 1
-    bandwidth: Optional[int] = 100
-    latency: Optional[int] = 10
-    loss_probability: Optional[float] = 0.01
+    # Bandwidth, latency and loss default to None, which means *unknown*.
+    # They used to default to 100 Mbps / 10 ms / 1%, so a link drawn on the
+    # canvas -- which carries a cost and nothing else -- arrived wearing three
+    # invented figures, and every metric derived from it repeated them. An
+    # unknown value stays unknown until something measures it.
+    bandwidth: Optional[float] = None
+    latency: Optional[float] = None
+    loss_probability: Optional[float] = None
 
 
 class Topology(BaseModel):
     devices: list[Device]
     links: list[Link]
     auto_ip: bool = True
-
-
-class TopologyCreateRequest(BaseModel):
-    topology: Topology
-
-
-class TopologyCreateResponse(BaseModel):
-    status: str
-    topology_id: str
-    validation: dict
-
-
-class RoutingRequest(BaseModel):
-    topology_id: str
-    source: str
-    destination: str
-
-
-class RoutingResponse(BaseModel):
-    algorithm: str
-    path: list[str]
-    hop_count: int
-    total_cost: int
-    routing_table: dict
-    frr_config: str
-    metrics: dict
-
-
-class SimulationRequest(BaseModel):
-    topology_id: str
-    source: str
-    destination: str
-    packet_count: int = 100
-    packet_size: int = 1024
-    algorithm: str = "dijkstra"
-
-
-class SimulationResponse(BaseModel):
-    simulation_id: str
-    packets_sent: int
-    packets_received: int
-    packet_loss_count: int
-    simulation_trace: list[dict]
-
-
-class AnalyticsCompareRequest(BaseModel):
-    topology_id: str
-    source: str
-    destination: str
-
-
-class AnalyticsCompareResponse(BaseModel):
-    comparison: dict
 
 
 class UploadTopologyRequest(BaseModel):
@@ -103,16 +55,30 @@ class RouteRecommendationRequest(BaseModel):
 class RouteRecommendationResponse(BaseModel):
     algorithm: str
     best_route: list[str]
-    latency: float
+    #: End-to-end latency in ms, measured by real ICMP echo requests against the
+    #: running lab. None when there is no lab to measure -- never a modelled
+    #: per-hop sum presented as an observation.
+    latency: Optional[float] = None
     confidence: int
     hop_count: int
     total_cost: int
     metrics: dict
     path: list[str] = []
-    frr_config: str = ""
     model: str = "RandomForestClassifier"
     quality_score: float = 0.0
     path_ranking: list[dict] = []
+    #: What the numbers above are derived from. "live lab" means every figure
+    #: came from a command run inside a container; "canvas topology" means only
+    #: the drawn graph was available and nothing was measured.
+    measurement_basis: str = "canvas topology"
+    measurement_note: str = ""
+    #: Which rows the Random Forest was fitted on.
+    training_basis: str = "unknown"
+    #: How far ahead of the runner-up the recommended path is.
+    margin: float = 0.0
+    #: The raw measurement behind the figures above, including the command that
+    #: produced them. None when nothing was measured.
+    measured: Optional[dict] = None
 
 
 # --------------------------------------------------------------------------- #

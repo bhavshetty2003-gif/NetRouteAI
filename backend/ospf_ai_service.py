@@ -25,7 +25,7 @@ import networkx as nx
 
 from ai_route_service import rank_paths
 from convergence import measure_convergence
-from lab_topology import discover_lab, lab_to_topology
+from lab_topology import discover_lab
 from metrics_collector import (
     LabUnavailable,
     _client,
@@ -37,7 +37,6 @@ from metrics_collector import (
     probe_traceroute,
 )
 from route_steer import steer_plan
-from routing_service import build_graph, calculate_metrics
 
 
 def lab_graph(lab: dict[str, Any]) -> nx.Graph:
