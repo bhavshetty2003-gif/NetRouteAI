@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings, X, RotateCcw, Database, ShieldCheck, Check } from 'lucide-react';
+import { Settings, X } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -30,6 +30,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close settings"
             className="p-1.5 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
           >
             <X className="w-4 h-4" />
@@ -37,39 +38,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="p-5 space-y-4 text-xs">
+          {/* This modal used to have a "Canvas & Rendering" section with two
+              rows: "Interactive Cable Control Handles -- Enabled" and
+              "Packet Glow Aura Shader -- Enabled". Neither was a setting.
+              There were no midpoint bending handles on any cable, so the
+              first described a feature that did not exist; the second
+              described a fixed SVG filter with no switch behind it. Both
+              "Enabled" labels were literals. A panel whose rows are
+              statements rather than controls is not a settings panel, so
+              they are gone rather than dressed up as toggles that do
+              nothing. */}
+
           <div className="space-y-3">
-            <h4 className="font-semibold text-accent uppercase tracking-wider text-[11px]">
-              Canvas & Rendering
-            </h4>
-            <div className="p-3 rounded-xl bg-panel border border-line space-y-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium text-ink">Interactive Cable Control Handles</div>
-                  <div className="text-[11px] text-ink-muted">Enables dynamic midpoint bending handles</div>
-                </div>
-                <span className="text-ok font-bold">Enabled</span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-panel border border-line space-y-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium text-ink">Packet Glow Aura Shader</div>
-                  <div className="text-[11px] text-ink-muted">High-contrast SVG glow filter for data frames</div>
-                </div>
-                <span className="text-ok font-bold">Enabled</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3 pt-2">
             <h4 className="font-semibold text-accent uppercase tracking-wider text-[11px]">
               Storage & Cache Management
             </h4>
             <div className="p-3 rounded-xl bg-panel border border-line flex items-center justify-between">
               <div>
                 <div className="font-medium text-ink">Reset LocalStorage Topology</div>
-                <div className="text-[11px] text-ink-muted">Clears saved network topology state from browser</div>
+                <div className="text-[11px] text-ink-muted">
+                  Erases this account's saved canvas from the browser
+                </div>
               </div>
               <button
                 onClick={() => {

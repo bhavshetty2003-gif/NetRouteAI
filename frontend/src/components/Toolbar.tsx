@@ -143,7 +143,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           }`}
           title={
             canDeploy
-              ? 'Send this topology to the backend and build it as the running lab'
+              ? 'Send this topology to the backend, build it as the running lab, and wait for OSPF to converge before returning (about 40 seconds)'
               : 'Draw at least two routers and connect them to deploy'
           }
         >

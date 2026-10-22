@@ -50,6 +50,24 @@ logger = logging.getLogger("netroute.auth")
 # Leave it empty and the Google button stays hidden instead of failing.
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 
+# Whether a password-reset code may be returned in the HTTP response.
+#
+# There is no SMTP configuration in this project, so a reset code has nowhere to
+# be *sent*. It used to be returned in the response body so the flow was usable,
+# which is an account-takeover bug: anyone who knows a registered address could
+# ask for a code, be handed it, and reset that account's password.
+#
+# The code is now always written to this server's log (so an operator can still
+# complete the flow on a machine they control) and is only echoed over HTTP when
+# `AUTH_EXPOSE_RESET_CODES=1` is set deliberately -- for a local demo, not for a
+# deployment. Wire up SMTP in `request_password_reset` and the question goes away.
+EXPOSE_RESET_CODES = os.environ.get("AUTH_EXPOSE_RESET_CODES", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
 # Google's keys rotate; cache them briefly so a burst of sign-ins does not
@@ -370,19 +388,33 @@ def request_password_reset(email: str) -> dict[str, Any]:
     code, expires = auth_db.create_reset_code(row["id"])
 
     # There is no SMTP configuration in this project, so the code cannot be
-    # emailed. It is returned in the response instead, and `delivery` says so,
-    # so the flow is usable and honest rather than silently failing. Wire up
-    # `smtplib` here to send it for real.
-    return {
+    # emailed. It is written to this server's log instead, which keeps the flow
+    # workable for an operator without handing the code to whoever asked for it:
+    # a response that carries the code is an account takeover for anyone who
+    # knows the address. Wire up `smtplib` here to send it for real.
+    logger.warning(
+        "Password reset code for %s: %s (expires %s). "
+        "It is in this log because no mail transport is configured; "
+        "set AUTH_EXPOSE_RESET_CODES=1 to also return it over HTTP (demo only).",
+        row["email"],
+        code,
+        expires,
+    )
+
+    payload: dict[str, Any] = {
         "sent": True,
-        "delivery": "shown_in_response",
-        "code": code,
-        "expires_at": expires,
+        "delivery": "server_log",
+        "expires_in_minutes": auth_db.RESET_MINUTES,
         "note": (
             "Email delivery is not configured on this server, so the reset code "
-            "is shown here instead of being emailed."
+            "was written to the server log instead of being emailed."
         ),
     }
+    if EXPOSE_RESET_CODES:
+        payload["delivery"] = "shown_in_response"
+        payload["code"] = code
+        payload["expires_at"] = expires
+    return payload
 
 
 def complete_password_reset(email: str, code: str, password: str, confirm: str) -> None:

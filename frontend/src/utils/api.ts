@@ -56,166 +56,39 @@ export interface Topology {
   auto_ip?: boolean;
 }
 
-export interface RoutingResult {
-  algorithm: string;
-  path: string[];
-  hop_count: number;
-  total_cost: number;
-  routing_table: Record<string, unknown>;
-  frr_config: string;
-  metrics: {
-    bandwidth: number;
-    latency: number;
-    throughput: number;
-    convergence_time: number;
-    packet_loss: number;
-  };
-  path_probability?: number;
-  ml_features?: {
-    predicted_congestion: number;
-    link_reliability: number;
-    predicted_delay_variance: number;
-  };
-}
-
-export interface SimulationResult {
-  simulation_id: string;
-  packets_sent: number;
-  packets_received: number;
-  packet_loss_count: number;
-  simulation_trace: Array<{
-    packet_id: number;
-    timestamp: number;
-    path: string[];
-    hop_times: number[];
-    total_latency: number;
-    status: string;
-  }>;
-}
-
-export interface AnalyticsResult {
-  comparison: {
-    dijkstra: {
-      path: string[];
-      hop_count: number;
-      total_cost: number;
-      metrics: Record<string, number>;
-    };
-    random_forest: {
-      path: string[];
-      hop_count: number;
-      total_cost: number;
-      metrics: Record<string, number>;
-      path_probability?: number;
-    };
-    winner: string;
-    recommendation: string;
-    differences: Record<string, number | string>;
-    trade_offs: Record<string, string>;
-  };
-}
-
-export async function createTopology(topology: Topology): Promise<{ topology_id: string; status: string }> {
-  const response = await apiFetch(`${API_BASE}/api/topology/create`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topology }),
-  });
-  if (!response.ok) throw new Error(`Failed to create topology: ${response.statusText}`);
-  return response.json();
-}
-
-export async function runDijkstra(
-  topologyId: string,
-  source: string,
-  destination: string
-): Promise<RoutingResult> {
-  const response = await apiFetch(`${API_BASE}/api/routing/dijkstra`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topology_id: topologyId, source, destination }),
-  });
-  if (!response.ok) throw new Error(`Dijkstra failed: ${response.statusText}`);
-  return response.json();
-}
-
-export async function runRandomForest(
-  topologyId: string,
-  source: string,
-  destination: string
-): Promise<RoutingResult> {
-  const response = await apiFetch(`${API_BASE}/api/routing/random-forest`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topology_id: topologyId, source, destination }),
-  });
-  if (!response.ok) throw new Error(`Random Forest failed: ${response.statusText}`);
-  return response.json();
-}
-
-export async function simulatePackets(
-  topologyId: string,
-  source: string,
-  destination: string,
-  packetCount: number = 100,
-  packetSize: number = 1024,
-  algorithm: string = "dijkstra"
-): Promise<SimulationResult> {
-  const response = await apiFetch(`${API_BASE}/api/simulation/send-packets`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      topology_id: topologyId,
-      source,
-      destination,
-      packet_count: packetCount,
-      packet_size: packetSize,
-      algorithm,
-    }),
-  });
-  if (!response.ok) throw new Error(`Simulation failed: ${response.statusText}`);
-  return response.json();
-}
-
-export async function compareAlgorithms(
-  topologyId: string,
-  source: string,
-  destination: string
-): Promise<AnalyticsResult> {
-  const response = await apiFetch(`${API_BASE}/api/analytics/compare`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topology_id: topologyId, source, destination }),
-  });
-  if (!response.ok) throw new Error(`Comparison failed: ${response.statusText}`);
-  return response.json();
-}
-
+/** What `/api/routing/recommend` answers with.
+ *
+ *  The figures here are measured on the running lab when the lab really is
+ *  the uploaded canvas, and modelled from the canvas when it is not --
+ *  `measurement_basis` says which, so nothing has to be guessed from the
+ *  numbers themselves. */
 export interface AiRouteRecommendation {
   algorithm: string;
   best_route: string[];
-  latency: number;
+  /** End-to-end latency in ms, measured by real ICMP echo requests. Null when
+   *  there was no lab to measure against -- never a modelled sum presented as
+   *  an observation. */
+  latency: number | null;
   confidence: number;
   hop_count: number;
   total_cost: number;
-  metrics: {
-    bandwidth: number;
-    latency: number;
-    throughput: number;
-    convergence_time: number;
-    packet_loss: number;
-  };
-  model?: string;
-  quality_score?: number;
-  path_ranking?: Array<{
-    path: string[];
-    quality: number;
-    latency_ms: number;
-    bandwidth_mbps: number;
-    packet_loss_percent: number;
-    total_cost: number;
-    hop_count: number;
-  }>;
+  /** The path's graph-derived figures. Every one of them is optional: a path
+   *  with an unmeasured hop has no end-to-end latency, and the backend sends
+   *  null rather than a number for it. */
+  metrics: Record<string, number | null>;
+  path?: string[];
+  model: string;
+  quality_score: number;
+  path_ranking: Array<Record<string, unknown>>;
+  /** "live lab" when every figure came from a command run in a container,
+   *  "canvas topology" when only the drawn graph was available. */
+  measurement_basis: string;
+  measurement_note: string;
+  /** Which rows the Random Forest was fitted on. */
+  training_basis: string;
+  /** How far ahead of the runner-up the recommended path is. */
+  margin: number;
+  measured?: Record<string, unknown> | null;
 }
 
 export async function uploadTopology(
@@ -430,25 +303,33 @@ export interface LiveAnalytics {
     traceroute_complete?: boolean;
     diagnosis: string | null;
   };
+  /** Candidate paths the model ranked.
+   *
+   *  These are *estimates*: they come from the graph's edge attributes, not
+   *  from a wire. Only the selected path is measured, and its measurements are
+   *  in `end_to_end` and in the per-method route reports. The names say
+   *  "estimated" so an estimate cannot be read as a reading. */
   ai_ranking: Array<{
     path: string[];
     quality: number;
-    latency_ms: number;
-    bandwidth_mbps: number;
+    estimated_latency_ms: number;
+    estimated_bandwidth_mbps: number;
+    estimated_packet_loss_percent: number;
     total_cost: number;
     hop_count: number;
+    measured: false;
   }>;
+  /** What the candidate estimates above are derived from. */
+  ai_ranking_basis: string;
   model: string;
+  /** What actually scored the paths. "heuristic" means no trained model was
+   *  available, so the page must not call the result a Random Forest. */
+  training_basis: string;
   confidence: number;
   comparison: { rows: ComparisonRow[] };
-  convergence?: {
-    convergence_ms: number | null;
-    detected: boolean;
-    link: { container: string; interface: string };
-    post_recovery_latency_ms: number | null;
-    post_recovery_loss_percent: number | null;
-    error?: string;
-  };
+  /** The link a convergence measurement would break. The measurement itself is
+   *  its own endpoint, because it takes the link down. */
+  convergence_link?: { container: string; interface: string } | null;
 }
 
 /** Read a FastAPI error body so the UI can show the real reason, not "failed". */
@@ -527,6 +408,26 @@ export interface DeployRouter {
   name?: string;
 }
 
+/** What the deploy did about OSPF convergence.
+ *
+ *  A deploy returns once the routers have finished learning the topology, so
+ *  "deployed" means "ready to measure" rather than "the containers are up".
+ *  `converged: false` means the lab is running but its routing tables were
+ *  still settling when the wait ran out, and the numbers it gives are what
+ *  was true at that moment. */
+export interface DeployConvergence {
+  converged: boolean;
+  waited_seconds: number;
+  settled_seconds?: number;
+  /** Routes each router held when the wait ended. */
+  routes?: Record<string, number>;
+  /** OSPF neighbours each router had reached the Full state. */
+  neighbours?: Record<string, number>;
+  /** How many neighbours each router should have, from the plan. */
+  expected_neighbours?: Record<string, number>;
+  detail?: string;
+}
+
 export interface DeployResult {
   ok: boolean;
   lab_dir: string;
@@ -542,6 +443,7 @@ export interface DeployResult {
    *  a route for the network the laptop is on takes the laptop's own traffic
    *  away from its router. The move is reported rather than done quietly. */
   notes?: string[];
+  convergence?: DeployConvergence;
 }
 
 export interface DeployState {
@@ -603,7 +505,6 @@ export type RoutingMethod = "ospf" | "ai";
 export async function getLiveAnalytics(
   source: string,
   destination: string,
-  includeConvergence = false,
   method: RoutingMethod = "ospf",
   packetCount = 12
 ): Promise<LiveAnalytics> {
@@ -613,7 +514,6 @@ export async function getLiveAnalytics(
     body: JSON.stringify({
       source,
       destination,
-      include_convergence: includeConvergence,
       method,
       packet_count: packetCount,
     }),
@@ -933,7 +833,9 @@ export async function getTraffic(): Promise<{ generators: TrafficGenerator[] }> 
 export interface ConvergenceResult {
   convergence_ms: number | null;
   detected: boolean;
-  link: { container: string; interface: string };
+  /** The link that was broken. Absent when the measurement failed before a
+   *  link was chosen, so it must never be dereferenced unguarded. */
+  link?: { container: string; interface: string };
   post_recovery_latency_ms: number | null;
   post_recovery_loss_percent: number | null;
   /** True when the interface was up beforehand and this call put it back. */
@@ -953,16 +855,22 @@ export interface ConvergenceResult {
   error?: string;
 }
 
+/** Time how long the network takes to recover from a link failure.
+ *
+ *  `link` is optional: left out, the backend picks the first transit interface
+ *  on the path between the two routers, which is the link whose failure the
+ *  figure is actually about. Breaking some other link would measure a failure
+ *  the pair never experienced. */
 export async function measureConvergence(
   source: string,
   destination: string,
-  link: { container: string; interface: string },
+  link?: { container: string; interface: string },
   timeout = 60
 ): Promise<ConvergenceResult> {
   const response = await apiFetch(`${API_BASE}/api/lab/convergence`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source, destination, ...link, timeout }),
+    body: JSON.stringify({ source, destination, ...(link ?? {}), timeout }),
   });
   if (!response.ok) throw new Error(await describeFailure(response, "Convergence"));
   return response.json();

@@ -28,11 +28,12 @@ Surface:
 import logging
 import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -56,6 +57,7 @@ from lab_deploy import (
     deploy,
     deployed_lab_running,
     load_record,
+    reapply,
     resolve_plan,
     teardown,
 )
@@ -161,6 +163,28 @@ def validate_topology(topology: dict) -> dict:
 def _lab_error(exc: Exception) -> HTTPException:
     """Convert a lab failure into a 503 the frontend can surface."""
     return HTTPException(status_code=503, detail=str(exc))
+
+
+def _first_transit_link_for(source: str, destination: str) -> dict[str, str] | None:
+    """The first transit interface on the path between two routers.
+
+    Used when the caller asks for a convergence measurement without naming a
+    link. The link is taken from the live OSPF path, so it is a link the
+    traffic really crosses -- breaking some other link would measure a
+    failure the pair never experienced.
+    """
+    from ospf_ai_service import _first_transit_link, ospf_rib_path
+
+    try:
+        lab = discover_lab()
+        if not lab["online"]:
+            return None
+        path = ospf_rib_path(lab, source.upper(), destination.upper())
+        if not path:
+            return None
+        return _first_transit_link(path, lab)
+    except Exception:  # noqa: BLE001 - a failed lookup just means "no link"
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -304,6 +328,29 @@ def lab_deploy_teardown():
     result = teardown()
     result["traffic_stopped"] = stopped.get("stopped", [])
     return result
+
+
+@app.post("/api/lab/reapply")
+def lab_reapply():
+    """Put the planned OSPF configuration back onto the lab that is running now.
+
+    Interface names are not stable across a container restart: Docker hands
+    `eth0..ethN` out again in a different order, so a saved `frr.conf` lands
+    each area and cost on the **wrong interface**. FRR accepts that silently,
+    the adjacencies never form, and the lab goes on measuring a network that
+    has never converged -- every path and every figure on the Analytics page
+    describes a network that does not exist.
+
+    Re-applying reads the live interface map and addresses each interface by
+    the address its link is supposed to hold, so the configuration follows the
+    addresses rather than the names. No container is recreated, so this is
+    safe to run against a lab that is already up.
+    """
+    try:
+        return reapply()
+    except DeployError as exc:
+        deploy_logger.warning("re-apply refused: %s", exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -489,7 +536,6 @@ def analytics_live(request: LiveAnalyticsRequest):
         return compare_ospf_vs_ai(
             request.source,
             request.destination,
-            include_convergence=request.include_convergence,
             method=request.method,
             packet_count=request.packet_count,
         )
@@ -878,12 +924,36 @@ def lab_link(request: LinkStateRequest):
 
 @app.post("/api/lab/convergence")
 def lab_convergence(request: ConvergenceRequest):
-    """Time how long the network takes to recover from a link failure."""
+    """Time how long the network takes to recover from a link failure.
+
+    This is deliberately its own endpoint rather than a flag on the live
+    measurement: it takes a link down for the duration, so folding it into
+    every comparison would mean every comparison changed the network it was
+    measuring and took up to a minute to answer.
+    """
+    link: dict[str, str] | None = None
+    if request.container:
+        link = {
+            "container": request.container,
+            "interface": request.interface or "eth0",
+        }
+    else:
+        # No link named: pick the first transit interface on the path between
+        # the two routers, which is the link whose failure the figure is about.
+        link = _first_transit_link_for(request.source, request.destination)
+        if link is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "No transit link on the path between "
+                    f"{request.source} and {request.destination} can be tested."
+                ),
+            )
     try:
         return measure_convergence(
             request.source,
             request.destination,
-            {"container": request.container, "interface": request.interface},
+            link,
             timeout=request.timeout,
         )
     except LabUnavailable as exc:
@@ -894,7 +964,10 @@ def lab_convergence(request: ConvergenceRequest):
 # Dataset
 # --------------------------------------------------------------------------- #
 @app.get("/api/lab/reachability")
-def lab_reachability(max_probes: int = 400, max_workers: int = 24):
+def lab_reachability(
+    max_probes: int = Query(default=400, ge=1, le=2000),
+    max_workers: int = Query(default=24, ge=1, le=64),
+):
     """Probe which device pairs actually answer, so the UI can avoid dead ends.
 
     A lab is not uniformly connected: hosts behind a stub-area ABR reach their
@@ -903,6 +976,10 @@ def lab_reachability(max_probes: int = 400, max_workers: int = 24):
 
     Probes run concurrently -- each pair can try several destination addresses
     with a ping each, so doing this serially takes minutes.
+
+    Both limits are bounded because they are used to size a thread pool and a
+    probe list: `max_workers=0` reached `ThreadPoolExecutor` unchanged and
+    produced an unhandled 500 rather than a rejection of the bad request.
     """
     lab = discover_lab()
     if not lab["online"]:
@@ -923,6 +1000,9 @@ def _sweep_pairs(
     """
     ids = [d["id"] for d in lab["devices"]]
     pairs = [(a, b) for i, a in enumerate(ids) for b in ids[i + 1:]][:max_probes]
+    # Defensive clamp: this function is also called internally, and a pool of
+    # zero workers raises inside the executor rather than being a bad request.
+    workers = max(1, min(int(max_workers), 64))
 
     def _probe(pair: tuple[str, str]) -> dict[str, Any]:
         a, b = pair
@@ -937,7 +1017,7 @@ def _sweep_pairs(
         except LabUnavailable as exc:
             return {"source": a, "destination": b, "reachable": False, "error": str(exc)}
 
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(_probe, pairs))
 
     reachable = [r for r in results if r["reachable"]]
@@ -955,6 +1035,16 @@ def dataset():
     return dataset_stats()
 
 
+# Whether a dataset collection is already running. Two concurrent collections
+# would install competing `tc` qdiscs on the same interfaces -- the impairment
+# lands on the first hop's egress interface, which several pairs share -- and
+# both would then measure the other's shaping. The collector itself is
+# strictly serial for the same reason; this keeps it one-at-a-time across
+# requests as well.
+_collect_lock = threading.Lock()
+_collect_running = False
+
+
 @app.post("/api/dataset/collect")
 def dataset_collect(request: LiveAnalyticsRequest, background_tasks: BackgroundTasks):
     """Measure the lab under varied real conditions and store training rows.
@@ -964,14 +1054,37 @@ def dataset_collect(request: LiveAnalyticsRequest, background_tasks: BackgroundT
     impairment so the Random Forest sees genuine latency, loss, queue depth
     and drop counts. Runs in the background; poll /api/dataset for progress.
     """
+    global _collect_running
+    with _collect_lock:
+        if _collect_running:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "A dataset collection is already running. Wait for it to "
+                    "finish before starting another -- two at once would "
+                    "install competing impairment on the same interfaces and "
+                    "measure each other's shaping."
+                ),
+            )
+        _collect_running = True
+
     lab = discover_lab()
     if not lab["online"]:
+        with _collect_lock:
+            _collect_running = False
         raise _lab_error(LabUnavailable(lab.get("error") or "Lab not running"))
 
     from dataset_collector import PROFILES, collect
 
     def _run() -> None:
-        collect(max_pairs=request.max_pairs, on_progress=_log_dataset_progress)
+        global _collect_running
+        try:
+            collect(max_pairs=request.max_pairs, on_progress=_log_dataset_progress)
+        except Exception:
+            logger.exception("dataset collection failed")
+        finally:
+            with _collect_lock:
+                _collect_running = False
 
     background_tasks.add_task(_run)
     names = ", ".join(profile["name"] for profile in PROFILES)
@@ -1053,6 +1166,12 @@ async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
     Echoing the origin back makes the response readable, and only for an
     origin this server already allows, so the error path does not become a way
     to read a response from somewhere that is not allowed.
+
+    The body itself is generic. It used to carry the exception's type and
+    message, which is helpful in a log and a disclosure in a response: a
+    traceback fragment can name internal files, table names and addresses,
+    and a client that can make the server fail can then read them one at a
+    time. The real cause is in the server's log, under the same request.
     """
     error_logger.exception("unhandled error on %s %s", request.method, request.url.path)
     headers = {}
@@ -1062,6 +1181,11 @@ async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
         headers["access-control-allow-credentials"] = "true"
     return JSONResponse(
         status_code=500,
-        content={"detail": f"{type(exc).__name__}: {exc}"},
+        content={
+            "detail": (
+                "The server hit an unexpected error while handling this request. "
+                "It has been logged; check the backend log for the cause."
+            )
+        },
         headers=headers,
     )

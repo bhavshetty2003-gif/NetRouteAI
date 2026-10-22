@@ -158,10 +158,24 @@ def _path_cost(lab: dict[str, Any], path: list[str], costs: dict[str, dict[str, 
 
 
 def _drive_traffic(client, container: str, targets: list[str], seconds: float) -> None:
-    """Run real ping load so queues and counters actually move."""
+    """Run real ping load so queues and counters actually move.
+
+    `container` is a Docker container name and each entry in `targets` is a
+    literal IP address. Both used to be something else -- the caller passed a
+    device id ("R1") where a container name ("r1") was wanted, and passed device
+    ids where addresses were wanted -- so every lookup raised, the exception
+    was swallowed, and no traffic was generated at all. A tbf limit with no
+    traffic to queue measures nothing, which is exactly the case this function
+    exists for.
+    """
+    if not container or not targets:
+        return
+    try:
+        container_obj = client.containers.get(container)
+    except Exception:  # noqa: BLE001
+        return
     for ip in targets:
         try:
-            container_obj = client.containers.get(container)
             container_obj.exec_run(
                 ["ping", "-i", "0.02", "-c", str(int(seconds / 0.02)), "-W", "1", ip],
                 detach=True,
@@ -235,9 +249,17 @@ def collect(
                 if impair:
                     apply_impairment(client, link["container"], link["interface"], **impair)
 
-                # A tbf limit only bites when there is traffic to queue.
+                # A tbf limit only bites when there is traffic to queue. The
+                # container name and the target addresses are looked up from
+                # the lab's own maps: the device id is neither.
                 if impair.get("bandwidth"):
-                    _drive_traffic(client, source, neighbours(source)[:2], 1.5)
+                    source_container = lab["container_map"].get(source)
+                    target_ips = [
+                        lab["ip_index"][n]
+                        for n in neighbours(source)[:2]
+                        if n in lab["ip_index"]
+                    ]
+                    _drive_traffic(client, source_container, target_ips, 1.5)
 
                 before = _path_queue_state(lab, path, client)
                 # Throughput is sampled while the profile is still in effect, so

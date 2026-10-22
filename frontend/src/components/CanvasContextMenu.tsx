@@ -11,7 +11,6 @@ import {
   Unlock,
   ChevronsUp,
   ChevronsDown,
-  Layers,
   Sparkles,
   MousePointer2,
   FolderPlus,
@@ -39,6 +38,14 @@ interface CanvasContextMenuProps {
   onToggleGroup: () => void;
   onSelectAllDevices: () => void;
   hasSelection: boolean;
+  /** Whether an *annotation* (a shape or a text label) is what is selected.
+   *
+   *  Duplicate, Bring Forward, Send Backward and Lock apply to annotations
+   *  only. They used to appear whenever *anything* was selected -- a router,
+   *  say -- and each of them then did nothing, because the handler they call
+   *  needs an annotation id and there was none. A menu entry that is offered
+   *  and then quietly does nothing is worse than one that is not offered. */
+  hasAnnotationSelection: boolean;
   isLocked?: boolean;
   isGrouped?: boolean;
   canGroup?: boolean;
@@ -57,6 +64,7 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
   onToggleGroup,
   onSelectAllDevices,
   hasSelection,
+  hasAnnotationSelection,
   isLocked = false,
   isGrouped = false,
   canGroup = false,
@@ -191,58 +199,64 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
         <>
           <div className="h-px bg-panel my-1" />
           <div className="py-1">
-            <button
-              onClick={() => {
-                onDuplicate();
-                onClose();
-              }}
-              className="w-full px-3 py-1.5 flex items-center space-x-2 hover:bg-accent-soft/60 hover:text-accent transition-colors text-left cursor-pointer"
-            >
-              <Copy className="w-3.5 h-3.5 text-ink-soft" />
-              <span>Duplicate</span>
-            </button>
+            {/* Annotation-only operations. With a device or a cable selected
+                these have nothing to act on, so they are not offered. */}
+            {hasAnnotationSelection && (
+              <>
+                <button
+                  onClick={() => {
+                    onDuplicate();
+                    onClose();
+                  }}
+                  className="w-full px-3 py-1.5 flex items-center space-x-2 hover:bg-accent-soft/60 hover:text-accent transition-colors text-left cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5 text-ink-soft" />
+                  <span>Duplicate</span>
+                </button>
 
-            <button
-              onClick={() => {
-                onBringForward();
-                onClose();
-              }}
-              className="w-full px-3 py-1.5 flex items-center space-x-2 hover:bg-accent-soft/60 hover:text-accent transition-colors text-left cursor-pointer"
-            >
-              <ChevronsUp className="w-3.5 h-3.5 text-ink-soft" />
-              <span>Bring Forward</span>
-            </button>
+                <button
+                  onClick={() => {
+                    onBringForward();
+                    onClose();
+                  }}
+                  className="w-full px-3 py-1.5 flex items-center space-x-2 hover:bg-accent-soft/60 hover:text-accent transition-colors text-left cursor-pointer"
+                >
+                  <ChevronsUp className="w-3.5 h-3.5 text-ink-soft" />
+                  <span>Bring Forward</span>
+                </button>
 
-            <button
-              onClick={() => {
-                onSendBackward();
-                onClose();
-              }}
-              className="w-full px-3 py-1.5 flex items-center space-x-2 hover:bg-accent-soft/60 hover:text-accent transition-colors text-left cursor-pointer"
-            >
-              <ChevronsDown className="w-3.5 h-3.5 text-ink-soft" />
-              <span>Send Backward</span>
-            </button>
+                <button
+                  onClick={() => {
+                    onSendBackward();
+                    onClose();
+                  }}
+                  className="w-full px-3 py-1.5 flex items-center space-x-2 hover:bg-accent-soft/60 hover:text-accent transition-colors text-left cursor-pointer"
+                >
+                  <ChevronsDown className="w-3.5 h-3.5 text-ink-soft" />
+                  <span>Send Backward</span>
+                </button>
 
-            <button
-              onClick={() => {
-                onToggleLock();
-                onClose();
-              }}
-              className="w-full px-3 py-1.5 flex items-center space-x-2 hover:bg-accent-soft/60 hover:text-accent transition-colors text-left cursor-pointer"
-            >
-              {isLocked ? (
-                <>
-                  <Unlock className="w-3.5 h-3.5 text-warn" />
-                  <span>Unlock Object</span>
-                </>
-              ) : (
-                <>
-                  <Lock className="w-3.5 h-3.5 text-ink-soft" />
-                  <span>Lock Object</span>
-                </>
-              )}
-            </button>
+                <button
+                  onClick={() => {
+                    onToggleLock();
+                    onClose();
+                  }}
+                  className="w-full px-3 py-1.5 flex items-center space-x-2 hover:bg-accent-soft/60 hover:text-accent transition-colors text-left cursor-pointer"
+                >
+                  {isLocked ? (
+                    <>
+                      <Unlock className="w-3.5 h-3.5 text-warn" />
+                      <span>Unlock Object</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-3.5 h-3.5 text-ink-soft" />
+                      <span>Lock Object</span>
+                    </>
+                  )}
+                </button>
+              </>
+            )}
 
             {(canGroup || isGrouped) && (
               <button

@@ -59,10 +59,27 @@ export function loadTopology(userId: number | null): SavedTopology {
   }
 }
 
+/** The outcome of a save.
+ *
+ *  `ok: false` means the canvas was **not** written: the browser's storage
+ *  quota was exhausted, or storage was blocked. The caller has to say so --
+ *  a canvas that quietly failed to save and a canvas that saved look
+ *  identical from the next sign-in, and "my work is gone" is not something to
+ *  discover later. */
+export interface SaveResult {
+  ok: boolean;
+  error?: string;
+}
+
 /** Records the canvas as it stands. An empty canvas is stored, not skipped:
  *  that is how "I deleted it" survives the sign-out. */
-export function saveTopology(userId: number | null, topology: SavedTopology): void {
-  if (userId === null) return;
+export function saveTopology(
+  userId: number | null,
+  topology: SavedTopology
+): SaveResult {
+  if (userId === null) {
+    return { ok: false, error: 'No account is signed in, so there is nowhere to save.' };
+  }
   try {
     localStorage.setItem(
       topologyKey(userId),
@@ -72,8 +89,20 @@ export function saveTopology(userId: number | null, topology: SavedTopology): vo
         annotations: topology.annotations,
       }),
     );
-  } catch {
-    // Quota or blocked storage. The canvas still works for this session.
+    return { ok: true };
+  } catch (error) {
+    // Quota or blocked storage. The canvas still works for this session, but
+    // the user is told, because it will not be there next time.
+    const detail = error instanceof Error ? error.message : String(error);
+    const quota =
+      error instanceof DOMException &&
+      (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED');
+    return {
+      ok: false,
+      error: quota
+        ? 'This browser is out of local storage space, so the canvas was not saved. It still works in this session, but it will be gone when you sign out.'
+        : `The canvas could not be saved: ${detail}`,
+    };
   }
 }
 

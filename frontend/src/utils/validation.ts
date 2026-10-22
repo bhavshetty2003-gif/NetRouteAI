@@ -217,11 +217,21 @@ export function validateSubnetMask(value: string): ValidationResult {
 
 /**
  * Validates default gateway. Must be 0.0.0.0 or a valid IPv4 address.
+ *
+ * `allowUnassigned` accepts an empty value, for a device that has no address
+ * yet: the gateway belongs to an address, so with no address there is nothing
+ * for it to point at.
  */
-export function validateDefaultGateway(value: string): ValidationResult {
+export function validateDefaultGateway(
+  value: string,
+  allowUnassigned = false
+): ValidationResult {
   const trimmed = value.trim();
 
   if (!trimmed) {
+    if (allowUnassigned) {
+      return { isValid: true, cleanedValue: '' };
+    }
     return {
       isValid: false,
       error: 'Incorrect Default Gateway: Cannot be empty. Use 0.0.0.0 if unassigned. Please rewrite.',

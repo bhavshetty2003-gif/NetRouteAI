@@ -24,7 +24,8 @@ from typing import Any
 import networkx as nx
 
 from ai_route_service import rank_paths
-from convergence import measure_convergence
+# `measure_convergence` is not called from here: the convergence measurement is
+# its own endpoint (it breaks a link), not part of every comparison.
 from lab_topology import discover_lab
 from metrics_collector import (
     LabUnavailable,
@@ -389,7 +390,13 @@ def _ip_owner_index(lab: dict[str, Any]) -> dict[str, str]:
     return index
 
 
-def real_ospf_path(lab: dict[str, Any], source: str, destination: str) -> dict[str, Any]:
+def real_ospf_path(
+    lab: dict[str, Any],
+    source: str,
+    destination: str,
+    target_ip: str | None = None,
+    hops: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """The OSPF path as the live network actually forwards it.
 
     Derived from `traceroute` hop addresses rather than by reimplementing FRR's
@@ -403,38 +410,52 @@ def real_ospf_path(lab: dict[str, Any], source: str, destination: str) -> dict[s
 
     `truncated` is True when a hop answered but is not a known lab device, so
     the caller can tell a complete path from one it must refuse to report.
+
+    `target_ip` and `hops` exist so this does not have to trace the path
+    again. Two things make the difference between a page that answers in a
+    second and one that takes a minute and a half:
+
+      * the address matters. `ip_index` holds the address on the device's
+        eth0, and on a multi-homed router that address is often not routable
+        from the source. A traceroute to an address that never answers waits
+        out its whole hop budget -- twelve hops, three probes each, one second
+        per probe -- for 33 seconds before admitting it knows nothing. The
+        address that *does* answer is the one to trace.
+      * the trace matters. The end-to-end measurement has already traced it,
+        so running the same trace again is the same 33 seconds spent twice.
     """
-    client = _client()
     src_dev = next((d for d in lab["devices"] if d["id"] == source), None)
-    dest_ip = lab["ip_index"].get(destination)
+    dest_ip = target_ip or lab["ip_index"].get(destination)
     if not src_dev or not dest_ip:
         return {"path": [], "hops": [], "truncated": True, "method": "unavailable"}
 
-    trace = probe_traceroute(client, src_dev["container"], dest_ip)
+    if hops is None:
+        client = _client()
+        trace = probe_traceroute(client, src_dev["container"], dest_ip)
+        hops = trace.get("hops", [])
     owners = _ip_owner_index(lab)
 
     path = [source]
-    hops: list[dict[str, Any]] = []
+    reported: list[dict[str, Any]] = []
     truncated = False
     answered_any = False
 
-    for line in trace.get("raw_lines", []):
-        m = re.match(r"\s*(\d+)\s+(\S+)(.*)$", line)
-        if not m:
-            continue
-        number = int(m.group(1))
-        hop_ip = m.group(2)
-        answered = "*" not in m.group(3)
-        rtts = [float(x) for x in re.findall(r"([\d.]+)\s*ms", m.group(3))]
+    for hop in hops:
+        hop_ip = hop.get("address")
+        answered = hop_ip is not None
         answered_any = answered_any or answered
 
-        device_id = owners.get(hop_ip) if re.match(r"^\d+\.\d+\.\d+\.\d+$", hop_ip) else None
-        hops.append(
+        device_id = (
+            owners.get(hop_ip)
+            if hop_ip and re.match(r"^\d+\.\d+\.\d+\.\d+$", hop_ip)
+            else None
+        )
+        reported.append(
             {
-                "hop": number,
+                "hop": hop.get("hop"),
                 "address": hop_ip,
                 "device": device_id,
-                "rtt_ms": round(sum(rtts) / len(rtts), 4) if rtts else None,
+                "rtt_ms": hop.get("rtt_ms"),
             }
         )
         if device_id is None:
@@ -447,7 +468,7 @@ def real_ospf_path(lab: dict[str, Any], source: str, destination: str) -> dict[s
         # Nothing replied: report no path rather than inventing a direct hop.
         return {
             "path": [],
-            "hops": hops,
+            "hops": reported,
             "truncated": True,
             "method": "unreachable",
         }
@@ -457,7 +478,7 @@ def real_ospf_path(lab: dict[str, Any], source: str, destination: str) -> dict[s
 
     return {
         "path": path,
-        "hops": hops,
+        "hops": reported,
         "truncated": truncated,
         "method": "traceroute (live forwarding path)",
     }
@@ -549,10 +570,49 @@ def _link_endpoint_addresses(lab: dict[str, Any], a: str, b: str) -> list[str]:
     return [addr for addr in _target_addresses(lab, b) if _in_subnet(addr, link.get("subnet"))]
 
 
+def reachable_target_address(
+    lab: dict[str, Any], source: str, destination: str
+) -> str | None:
+    """The address of `destination` that answers a ping from `source`.
+
+    A multi-homed router holds several addresses and they do not all route the
+    same way, so the one to trace is the one that answers -- not the one on
+    eth0, which `ip_index` happens to hold. Tracing an address that cannot be
+    reached waits out the whole hop budget (12 hops x 3 probes x 1 s) and then
+    reports nothing, so the address is settled first with a single ping.
+    """
+    client = _client()
+    src_dev = next((d for d in lab["devices"] if d["id"] == source), None)
+    if not src_dev:
+        return None
+
+    for address in _target_addresses(lab, destination):
+        try:
+            attempt = probe_ping(
+                client, src_dev["container"], address, count=1, interval=0.1
+            )
+        except LabUnavailable:
+            return None
+        if attempt["reachable"]:
+            return address
+    return None
+
+
 def _measure_path_hops(path: list[str], lab: dict) -> dict[str, Any]:
     """Ping each hop-to-hop segment so latency is measured, not computed."""
     if len(path) < 2:
-        return {"segments": [], "total_latency_ms": None, "reachable": False}
+        # A path with no hop in it has no segments to measure. The full key
+        # set is returned anyway: a caller that reads `measured_segments`
+        # must not have to know which shape it got, and a half-filled dict
+        # is a KeyError waiting for the day the path grows one hop.
+        return {
+            "segments": [],
+            "total_latency_ms": None,
+            "latency_margin_ms": None,
+            "worst_segment_loss_percent": None,
+            "measured_segments": 0,
+            "reachable": False,
+        }
 
     client = _client()
     segments: list[dict[str, Any]] = []
@@ -671,7 +731,6 @@ def _link_metrics(path: list[str], lab: dict) -> list[dict[str, Any]]:
 def compare_ospf_vs_ai(
     source: str,
     destination: str,
-    include_convergence: bool = True,
     convergence_link: dict[str, str] | None = None,
     method: str = "ospf",
     packet_count: int = 12,
@@ -687,6 +746,10 @@ def compare_ospf_vs_ai(
     one dropped packet out of six reads as "17% loss" and no figure below that
     is possible at all. 12 makes a single drop read as 8%, and 1% needs 100, so
     the UI reports the count it used and the loss it could actually resolve.
+
+    Convergence is not measured here. It breaks a link and waits for the
+    network to re-converge, so it belongs to its own endpoint and its own
+    button; this call reports which link would be broken.
     """
     lab = discover_lab()
     if not lab["online"]:
@@ -696,6 +759,14 @@ def compare_ospf_vs_ai(
     if source not in lab["ip_index"] or destination not in lab["ip_index"]:
         raise LabUnavailable(
             f"'{source}' or '{destination}' is not part of the running lab"
+        )
+    if source == destination:
+        # A pair with one router in it has no path, so there is nothing to
+        # measure and nothing to compare. Saying so is the answer; an empty
+        # route report that reads like a failed measurement is not.
+        raise LabUnavailable(
+            f"Source and destination are the same router ({source}). "
+            "Pick two different routers to measure a path between them."
         )
     if method not in ROUTING_METHODS:
         raise LabUnavailable(
@@ -730,7 +801,17 @@ def compare_ospf_vs_ai(
     # guess dressed as a reading, and this page's rule is that every figure
     # traces back to a command run inside a lab container.
     rib = ospf_rib_path(lab, source, destination, graph=G)
-    live = real_ospf_path(lab, source, destination)
+    live = real_ospf_path(
+        lab,
+        source,
+        destination,
+        # The address the end-to-end measurement found reachable, and the trace
+        # it already ran. Tracing `ip_index[destination]` instead meant a second
+        # traceroute to an address that often cannot be reached at all, which
+        # cost 33 seconds per attempt and up to three attempts.
+        target_ip=end_to_end.get("target_ip"),
+        hops=end_to_end.get("hops"),
+    )
     traced_ok = bool(live["path"]) and not live["truncated"] and live["path"][-1] == destination
 
     if rib and rib[-1] == destination:
@@ -822,8 +903,13 @@ def compare_ospf_vs_ai(
             {
                 "path": s["path"],
                 "quality": s["quality"],
-                "latency_ms": s["latency_ms"],
-                "bandwidth_mbps": s["bandwidth_mbps"],
+                # Named "estimated" because they come from the graph's edge
+                # attributes, not from a wire. The measured counterpart of
+                # these lives in `end_to_end`, and giving the two the same
+                # name is how an estimate ends up being read as a reading.
+                "estimated_latency_ms": s["estimated_latency_ms"],
+                "estimated_bandwidth_mbps": s["estimated_bandwidth_mbps"],
+                "estimated_packet_loss_percent": s["estimated_packet_loss_percent"],
                 "total_cost": s["total_cost"],
                 "hop_count": s["hop_count"],
                 "measured": False,
@@ -832,6 +918,9 @@ def compare_ospf_vs_ai(
         ],
         "model": ranked["model"],
         "confidence": ranked["confidence"],
+        # What actually scored the paths. "heuristic" means no trained model
+        # was available, so the UI must not call it a Random Forest.
+        "training_basis": ranked["training_basis"],
     }
 
     result["active"] = _active_method(
@@ -839,17 +928,14 @@ def compare_ospf_vs_ai(
     )
     result["comparison"] = _build_comparison(result)
 
-    if include_convergence:
-        link = convergence_link or _first_transit_link(ospf, lab)
-        if link:
-            try:
-                result["convergence"] = measure_convergence(
-                    source, destination, link, timeout=60.0
-                )
-            except LabUnavailable as exc:
-                result["convergence"] = {"error": str(exc)}
-        else:
-            result["convergence"] = {"error": "No transit link available to test"}
+    # Which link a convergence measurement would break. The measurement itself
+    # is a separate endpoint: it takes the link down and waits for OSPF to
+    # re-converge, which takes up to a minute and changes the network it is
+    # measuring. Folding it into this call made every comparison that asked
+    # for it slow and destructive, so the page asks for it on its own button.
+    # The link is named here so the page can say what would be broken before
+    # anything is.
+    result["convergence_link"] = convergence_link or _first_transit_link(ospf, lab)
 
     return result
 
@@ -1129,7 +1215,11 @@ def path_for_method(lab: dict[str, Any], method: str, source: str, destination: 
         rib = ospf_rib_path(lab, source, destination, graph=G)
         if rib and rib[-1] == destination:
             return rib
-        live = real_ospf_path(lab, source, destination)
+        # The RIB had nothing to say, so fall back to what the network is
+        # actually forwarding -- traced to an address that answers, so the
+        # trace is a measurement rather than a wait.
+        target = reachable_target_address(lab, source, destination)
+        live = real_ospf_path(lab, source, destination, target_ip=target)
         if live["path"] and not live["truncated"] and live["path"][-1] == destination:
             return live["path"]
         return []

@@ -70,14 +70,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Bottom Status & Logout */}
       <div className="p-3 border-t border-line/80 space-y-2 bg-panel/40">
-        {/* Network Status Widget */}
-        <div className="p-2.5 rounded-xl bg-panel/60 border border-line text-xs text-ink-muted flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-ok animate-pulse" />
-            <span className="text-[11px] font-mono text-ink-soft">Engine Online</span>
-          </div>
-          <span className="text-[10px] text-accent font-mono">0.4ms Latency</span>
-        </div>
+        {/* A status widget used to sit here: a green pulsing dot, the words
+            "Engine Online", and "0.4ms Latency". The latency was a string
+            literal, so it reported a measurement that was never taken, and
+            "Engine Online" claimed a running engine without checking one.
+            Showing the *real* lab state instead is not an option here: the lab
+            is one shared lab, so its device count would tell every visitor
+            whose network was deployed last -- the same leak the landing page
+            was rebuilt to avoid. Until there is a per-user fact to show, the
+            widget is gone rather than made-up. */}
 
         {/* Logout Button */}
         <button

@@ -11,11 +11,11 @@ interface ForgotPasswordPageProps {
 /**
  * Two steps in one screen: ask for a reset code, then set a new password.
  *
- * This project has no SMTP configured, so the backend cannot email the code and
- * returns it in the response instead. That is displayed here with an explicit
- * note rather than hidden, because a user who was told to check their inbox and
- * finds nothing there has been actively misled. Wire up SMTP in
- * `auth.request_password_reset` and this note becomes untrue -- remove it then.
+ * This project has no SMTP configured, so the backend cannot email the code. It
+ * writes it to the server's log and only echoes it back over HTTP when the
+ * server was started with `AUTH_EXPOSE_RESET_CODES=1` (a local-demo setting).
+ * Either way the page says which of the two happened, rather than telling the
+ * user to check an inbox that will stay empty.
  */
 export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onGoToLogin, onClose }) => {
   const [stage, setStage] = useState<'request' | 'reset' | 'done'>('request');
@@ -24,6 +24,7 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onGoToLo
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [issuedCode, setIssuedCode] = useState<string | null>(null);
+  const [delivery, setDelivery] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -34,7 +35,8 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onGoToLo
     setError(null);
     try {
       const result = await requestPasswordReset(email.trim());
-      if (result.code) setIssuedCode(result.code);
+      setIssuedCode(result.code ?? null);
+      setDelivery(result.delivery ?? null);
       setStage('reset');
     } catch (failure) {
       setError(failure instanceof AuthError ? failure.message : 'Could not start the password reset.');
@@ -116,10 +118,19 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onGoToLo
         <form onSubmit={handleReset} className="space-y-4" noValidate>
           {error && <AuthAlert message={error} />}
 
-          {issuedCode && (
+          {issuedCode ? (
             <AuthAlert
               tone="info"
               message={`Email delivery is not configured on this server, so your reset code is ${issuedCode}. It is valid for 10 minutes.`}
+            />
+          ) : (
+            <AuthAlert
+              tone="info"
+              message={
+                delivery === 'none'
+                  ? 'If that address has an account, a reset code has been issued. Email delivery is not configured on this server, so the code is in the server log.'
+                  : 'A reset code has been issued. Email delivery is not configured on this server, so the code was written to the server log. It is valid for 10 minutes.'
+              }
             />
           )}
 

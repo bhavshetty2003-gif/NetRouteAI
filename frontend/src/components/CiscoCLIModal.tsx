@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { NetworkDevice, NetworkInterface } from '../types/network';
-import { Terminal, X, Maximize2, Minimize2, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
-import { validateIPv4, validateSubnetMask, validateDefaultGateway, validateIpMaskPair } from '../utils/validation';
+import { NetworkDevice } from '../types/network';
+import { Terminal, X, Maximize2, Minimize2, Trash2 } from 'lucide-react';
+import { validateIPv4, validateSubnetMask, validateDefaultGateway, validateIpMaskPair, isUnassignedIp } from '../utils/validation';
 import { pingLabDevice } from '../utils/api';
 
 interface CiscoCLIModalProps {
@@ -611,7 +611,7 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-ink-muted font-mono">
-                Port Console: Serial0 | IP: {device.ipAddress}
+                Port Console: Serial0 | IP: {isUnassignedIp(device.ipAddress) ? 'unassigned' : device.ipAddress}
               </p>
             </div>
           </div>
@@ -628,6 +628,7 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
             <button
               id="cisco-cli-maximize-btn"
               onClick={() => setIsMaximized(!isMaximized)}
+              aria-label={isMaximized ? 'Restore the CLI size' : 'Maximise the CLI'}
               className="p-1.5 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
             >
               {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -635,6 +636,7 @@ export const CiscoCLIModal: React.FC<CiscoCLIModalProps> = ({
             <button
               id="cisco-cli-close-btn"
               onClick={onClose}
+              aria-label="Close the CLI"
               className="p-1.5 text-ink-muted hover:text-bad hover:bg-raised rounded transition-colors"
             >
               <X className="w-4 h-4" />

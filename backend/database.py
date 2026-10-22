@@ -15,6 +15,10 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "training_data.db")
 # Congestion classes the Random Forest predicts.
 LABELS = ("Low", "Medium", "High")
 
+# How many *measured* rows a training set needs before it counts as ready to
+# fit a model that will decide real forwarding. See `dataset_stats`.
+MIN_TRAINING_ROWS = 100
+
 
 def get_db():
     """Get database connection."""
@@ -206,14 +210,45 @@ def dataset_stats() -> dict:
     labels = conn.execute(
         "SELECT label, COUNT(*) AS n FROM network_metrics GROUP BY label"
     ).fetchall()
+    measured_labels = conn.execute(
+        "SELECT DISTINCT label FROM network_metrics WHERE origin = 'measured'"
+    ).fetchall()
     conn.close()
 
     total = row["total"] or 0
+    measured = row["measured"] or 0
+
+    # "Ready for training" means a model that will decide real forwarding can be
+    # fitted on this set. That needs rows that came out of a lab container, and
+    # at least two of the three congestion classes: a single-class set teaches a
+    # classifier to answer with that class every time, which is not a model.
+    #
+    # The synthetic bootstrap rows exist so a fresh install has something to fit
+    # on, and the service reports which set it used (`training_basis`), but
+    # "600 rows, all of them synthetic" is not 600 rows of evidence. This used
+    # to report `total >= 100`, which called a purely synthetic set ready.
+    class_count = len({r["label"] for r in measured_labels})
+    ready = measured >= MIN_TRAINING_ROWS and class_count >= 2
+    if ready:
+        reason = f"{measured} measured rows across {class_count} classes"
+    elif measured < MIN_TRAINING_ROWS:
+        reason = (
+            f"{measured} measured rows; {MIN_TRAINING_ROWS} are needed for a "
+            f"model that decides real forwarding"
+        )
+    else:
+        reason = (
+            f"the measured rows cover {class_count} class(es); at least 2 are "
+            f"needed so the model can tell them apart"
+        )
+
     return {
         "total": total,
-        "measured": row["measured"] or 0,
+        "measured": measured,
         "synthetic": row["synthetic"] or 0,
-        "measured_ratio": round((row["measured"] or 0) / total, 4) if total else 0.0,
+        "measured_ratio": round(measured / total, 4) if total else 0.0,
         "labels": {r["label"]: r["n"] for r in labels},
-        "ready_for_training": total >= 100,
+        "ready_for_training": ready,
+        "ready_reason": reason,
+        "min_training_rows": MIN_TRAINING_ROWS,
     }

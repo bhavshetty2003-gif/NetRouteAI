@@ -43,6 +43,7 @@ import {
   getOspfAreas,
   getTraffic,
   measureBandwidth,
+  measureConvergence,
   setLinkState,
   setOspfArea,
   setRoutingMethod,
@@ -69,6 +70,18 @@ function ago(epochSeconds: number | null | undefined): string {
   const seconds = Math.max(0, Math.round(Date.now() / 1000 - epochSeconds));
   if (seconds < 60) return `${seconds}s ago`;
   return `${Math.round(seconds / 60)}m ago`;
+}
+
+/** Name the link a convergence measurement broke.
+ *
+ *  The field is optional in the payload: a measurement that failed before it
+ *  picked a link has no link to name, and reading `link.container` on it threw
+ *  inside the render -- which unmounted the whole view, error boundary or no
+ *  error boundary. */
+function convergenceLinkLabel(result: ConvergenceResult): string {
+  const link = result.link;
+  if (!link || (!link.container && !link.interface)) return 'unknown link';
+  return `${link.container ?? '?'}/${link.interface ?? '?'}`;
 }
 
 const METHODS: Array<{ key: RoutingMethod; label: string; hint: string }> = [
@@ -135,7 +148,6 @@ export const AnalyticsView: React.FC<{
 
   const [source, setSource] = useState('');
   const [destination, setDestination] = useState('');
-  const [includeConvergence, setIncludeConvergence] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [method, setMethod] = useState<RoutingMethod>('ospf');
 
@@ -147,8 +159,15 @@ export const AnalyticsView: React.FC<{
   const [runError, setRunError] = useState<string | null>(null);
   const [reachedLab, setReachedLab] = useState(false);
   const [reachability, setReachability] = useState<Record<string, Record<string, boolean>>>({});
+  const [reachabilityError, setReachabilityError] = useState<string | null>(null);
   const [steering, setSteering] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  /** Convergence is a deliberate, destructive measurement: it takes a link
+   *  down. It therefore has its own button and its own state, and it never
+   *  rides along with the ordinary measurement. */
+  const [convergenceBusy, setConvergenceBusy] = useState(false);
+  const [convergenceError, setConvergenceError] = useState<string | null>(null);
+  const [throughputError, setThroughputError] = useState<string | null>(null);
 
   // Routers drawn on the canvas. This is what scopes the page: with none, there
   // is no topology to report on and the lab's own figures are not shown.
@@ -311,8 +330,13 @@ export const AnalyticsView: React.FC<{
         map[p.destination][p.source] = p.reachable;
       }
       setReachability(map);
-    } catch {
+      setReachabilityError(null);
+    } catch (error) {
       setReachability({});
+      // A failed sweep is not "nothing is reachable" -- it is an unanswered
+      // question, and the page must say so rather than let the hint under the
+      // selects silently disappear.
+      setReachabilityError(error instanceof Error ? error.message : String(error));
     }
   }, []);
 
@@ -347,6 +371,10 @@ export const AnalyticsView: React.FC<{
   // nothing at all.
   const runSeq = useRef(0);
 
+  /** Front-to-front latency samples, so the trend is visible rather than implied. */
+  const history = useRef<Array<{ at: number; latency: number | null }>>([]);
+  const [trend, setTrend] = useState<Array<{ at: number; latency: number | null }>>([]);
+
   const run = useCallback(async (manual = false) => {
     if (!lab?.online || !source || !destination || source === destination) return;
     const seq = ++runSeq.current;
@@ -354,20 +382,53 @@ export const AnalyticsView: React.FC<{
     if (manual) setManualBusy(true);
     setRunError(null);
     try {
-      const result = await getLiveAnalytics(source, destination, includeConvergence, method);
+      // The comparison call measures the pair; it does not take a link down,
+      // so convergence is not part of it. The two are separate measurements
+      // with separate endpoints, and conflating them made the page claim a
+      // convergence figure it never asked for.
+      const result = await getLiveAnalytics(source, destination, method);
       if (seq !== runSeq.current) return;
       setLive(result);
-      if (result.convergence) setConvergence(result.convergence);
     } catch (error) {
       if (seq !== runSeq.current) return;
       setRunError(error instanceof Error ? error.message : String(error));
+      // The figures on screen were measured before this failure. Leaving them
+      // up would present a stale reading as if it were current, so they go.
+      setLive(null);
+      setThroughput(null);
+      setConvergence(null);
+      history.current = [];
+      setTrend([]);
     } finally {
       if (seq === runSeq.current) {
         setBusy(false);
         setManualBusy(false);
       }
     }
-  }, [lab?.online, source, destination, includeConvergence, method]);
+  }, [lab?.online, source, destination, method]);
+
+  /** Measure how long the network takes to recover from a link failure.
+   *
+   *  This is a separate measurement because it is destructive: it takes the
+   *  link down for up to a minute and then puts it back. Folding it into the
+   *  ordinary comparison would change the network the comparison measured. */
+  const runConvergence = useCallback(async () => {
+    if (!lab?.online || !source || !destination || source === destination) return;
+    setConvergenceBusy(true);
+    setConvergenceError(null);
+    setConvergence(null);
+    try {
+      const result = await measureConvergence(source, destination);
+      setConvergence(result);
+      // The backend reports a failed measurement inside a 200 body as well as
+      // by refusing; either way the reason belongs on screen.
+      if (result.error) setConvergenceError(result.error);
+    } catch (error) {
+      setConvergenceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConvergenceBusy(false);
+    }
+  }, [lab?.online, source, destination]);
 
   /** Install or drop the static routes that make the selected method real. */
   const applyMethod = useCallback(
@@ -406,15 +467,24 @@ export const AnalyticsView: React.FC<{
     // latency, loss and hop count for a different destination entirely.
     try {
       setThroughput(await measureBandwidth(source, destination, 2));
-    } catch {
+      setThroughputError(null);
+    } catch (error) {
       setThroughput(null);
+      // "—" with no explanation reads as "not measured yet" forever. The
+      // reason the probe failed belongs on the card.
+      setThroughputError(error instanceof Error ? error.message : String(error));
     }
   }, [source, destination]);
 
   useEffect(() => {
+    // The pair has to exist. Without this the probe fired the moment the lab
+    // was known to be online — before the source and destination had been
+    // chosen — and asked the backend to measure a pair whose names were the
+    // empty string, which came back as a 503 and put an error on the card.
     if (!hasTopologyRouters || !scopeReady || !lab?.online) return;
+    if (!source || !destination || source === destination) return;
     runThroughput();
-  }, [hasTopologyRouters, scopeReady, lab?.online, source, runThroughput]);
+  }, [hasTopologyRouters, scopeReady, lab?.online, source, destination, runThroughput]);
 
   // Refresh once a minute so the path chain, interface counters and the
   // trained-model figures stay current instead of freezing at page load. This
@@ -432,10 +502,6 @@ export const AnalyticsView: React.FC<{
     const timer = setInterval(() => run(), 15000);
     return () => clearInterval(timer);
   }, [autoRefresh, hasTopologyRouters, scopeReady, lab?.online, run]);
-
-  /** Front-to-front latency samples, so the trend is visible rather than implied. */
-  const history = useRef<Array<{ at: number; latency: number | null }>>([]);
-  const [trend, setTrend] = useState<Array<{ at: number; latency: number | null }>>([]);
 
   useEffect(() => {
     if (!live) return;
@@ -456,6 +522,8 @@ export const AnalyticsView: React.FC<{
     setThroughput(null);
     setConvergence(null);
     setNote(null);
+    setConvergenceError(null);
+    setThroughputError(null);
     history.current = [];
     setTrend([]);
   }, [source, destination, method]);
@@ -463,11 +531,15 @@ export const AnalyticsView: React.FC<{
   const e2e = live?.end_to_end;
   const measured = e2e?.reachable === true;
 
-  /** Reachability of the current pair from the lab sweep, when it was probed. */
+  /** Reachability of the current pair from the lab sweep, when it was probed.
+   *
+   *  The sweep answers for a pair only after it has probed it, so this is
+   *  either "the pair was probed and did/didn't answer" or "the pair has not
+   *  been probed yet" -- in which case nothing is claimed at all. */
   const pairState = (() => {
     const row = reachability[source];
     if (!row || !(destination in row)) return null;
-    return { known: row[destination] !== undefined, reachable: row[destination] === true };
+    return { reachable: row[destination] === true };
   })();
 
   // The two selects must never offer the same router: a source equal to the
@@ -487,7 +559,11 @@ export const AnalyticsView: React.FC<{
 
   const activeReport: RouteReport | undefined = live ? live[method] : undefined;
 
-  const ospfLinks = activeReport?.links ?? [];
+  /** The links of the *selected* method's path -- not necessarily OSPF's. The
+   *  old name said "ospf" while carrying whichever path was selected, which
+   *  made the interface table describe a different path from the one the
+   *  heading named. */
+  const activeLinks = activeReport?.links ?? [];
 
   // The steer plan and in-effect flag describe `live.active_method`. If the user
   // has since picked a different method, deriving them from `active` alone would
@@ -511,8 +587,8 @@ export const AnalyticsView: React.FC<{
     // hop leaves every match false, which would offer a revert for a pair
     // nothing has been injected into.
     (live?.path_taken_complete !== false && live?.path_taken_matches?.ospf === false);
-  const queueDrops = ospfLinks.reduce((sum, l) => sum + (l.qdisc_drops || 0), 0);
-  const interfaceErrors = ospfLinks.reduce((sum, l) => sum + (l.errors || 0), 0);
+  const queueDrops = activeLinks.reduce((sum, l) => sum + (l.qdisc_drops || 0), 0);
+  const interfaceErrors = activeLinks.reduce((sum, l) => sum + (l.errors || 0), 0);
   const pathBandwidth = activeReport?.computed.bandwidth ?? null;
 
   // ---------------------------------------------------------------- render
@@ -696,11 +772,12 @@ export const AnalyticsView: React.FC<{
               <p
                 className={`text-[10px] font-mono mt-1 ${pairState.reachable ? 'text-ok' : 'text-bad'}`}
               >
-                {pairState.known === false
-                  ? 'pair not yet probed'
-                  : pairState.reachable
-                    ? 'confirmed reachable'
-                    : 'no path — pick another'}
+                {pairState.reachable ? 'confirmed reachable' : 'no path — pick another'}
+              </p>
+            )}
+            {reachabilityError && (
+              <p className="text-[10px] font-mono mt-1 text-warn" title={reachabilityError}>
+                reachability sweep failed — hint unavailable
               </p>
             )}
           </div>
@@ -723,7 +800,7 @@ export const AnalyticsView: React.FC<{
             Auto
           </label>
           <span className="text-[10px] font-mono text-ink-muted mb-px">
-            re-measures every 60 s
+            {autoRefresh ? 're-measures every 15 s' : 're-measures every 60 s'}
           </span>
         </div>
       </div>
@@ -903,7 +980,7 @@ export const AnalyticsView: React.FC<{
                         <th>Address</th>
                         <th>Router</th>
                         <th className="text-right">RTT</th>
-                        <th>Matches</th>
+                        <th>On path</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1018,8 +1095,11 @@ export const AnalyticsView: React.FC<{
                     ? throughput.reachable === false
                       ? throughput.note ?? '0 Mbps — no byte delta measured'
                       : `${(throughput.rx_bytes / 1e6).toFixed(2)} MB in / ${(throughput.tx_bytes / 1e6).toFixed(2)} MB out over ${throughput.sample_seconds}s on ${throughput.container}`
-                    : 'Run a throughput probe to populate'
+                    : throughputError
+                      ? throughputError
+                      : 'Run a throughput probe to populate'
                 }
+                tone={!throughput && throughputError ? 'bad' : undefined}
                 action={<button onClick={runThroughput} className="btn-ghost !px-2 !py-1 text-[10px]">probe</button>}
               />
               <MetricCard
@@ -1032,11 +1112,13 @@ export const AnalyticsView: React.FC<{
                       ? 'no alternate route'
                       : convergence?.convergence_ms !== null && convergence?.convergence_ms !== undefined
                         ? `${convergence.convergence_ms.toFixed(0)} ms`
-                        : 'not measured'
+                        : convergenceError
+                          ? 'failed'
+                          : 'not measured'
                 }
                 detail={
                   convergence
-                    ? `Link ${convergence.link.container}/${convergence.link.interface} → ${
+                    ? `Link ${convergenceLinkLabel(convergence)} → ${
                         convergence.destination_avoided_failed_link
                           ? `${source} → ${destination} never crossed it`
                           : convergence.alternate_path_exists === false
@@ -1045,26 +1127,34 @@ export const AnalyticsView: React.FC<{
                               ? 'recovered'
                               : 'no recovery within timeout'
                       }`
-                    : 'not measured'
+                    : convergenceError
+                      ? convergenceError
+                      : 'not measured — press "Measure convergence" to break a link and time the recovery'
                 }
                 tone={
-                  convergence?.destination_avoided_failed_link ||
-                  convergence?.alternate_path_exists === false
-                    ? undefined
-                    : convergence?.detected
-                      ? 'ok'
-                      : undefined
+                  convergenceError
+                    ? 'bad'
+                    : convergence?.destination_avoided_failed_link ||
+                      convergence?.alternate_path_exists === false
+                      ? undefined
+                      : convergence?.detected
+                        ? 'ok'
+                        : undefined
                 }
                 action={
-                  <label className="btn-ghost !px-2 !py-1 text-[10px] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="accent-accent"
-                      checked={includeConvergence}
-                      onChange={(e) => setIncludeConvergence(e.target.checked)}
-                    />
-                    enable
-                  </label>
+                  <button
+                    onClick={runConvergence}
+                    disabled={convergenceBusy || source === destination}
+                    className="btn-ghost !px-2 !py-1 text-[10px]"
+                    title="Takes a link down and times how long the network takes to recover, then puts the link back"
+                  >
+                    {convergenceBusy ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Timer className="w-3 h-3" />
+                    )}
+                    {convergenceBusy ? 'Measuring…' : 'Measure convergence'}
+                  </button>
                 }
               />
             </div>
@@ -1082,19 +1172,27 @@ export const AnalyticsView: React.FC<{
                   <p className="text-xs text-ink-muted font-mono">
                     {live.model} &middot; confidence {live.confidence}%
                   </p>
+                  {/* The model's name is not enough: the page must say what the
+                      score was actually computed from, or a figure derived
+                      from a heuristic reads as a trained model's output. */}
+                  <p className="text-[10px] text-ink-faint font-mono mt-0.5">
+                    basis: {live.training_basis}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-3 text-[10px] font-mono text-ink-muted">
                 <span>measured {ago(live.measured_at)}</span>
-                {includeConvergence && convergence && (
+                {convergence && (
                   <span
                     className={
-                      convergence.destination_avoided_failed_link ||
-                      convergence.alternate_path_exists === false
-                        ? 'text-ink-muted'
-                        : convergence.detected
-                          ? 'text-ok'
-                          : 'text-bad'
+                      convergenceError
+                        ? 'text-bad'
+                        : convergence.destination_avoided_failed_link ||
+                          convergence.alternate_path_exists === false
+                          ? 'text-ink-muted'
+                          : convergence.detected
+                            ? 'text-ok'
+                            : 'text-bad'
                     }
                   >
                     convergence{' '}
@@ -1118,7 +1216,7 @@ export const AnalyticsView: React.FC<{
                 forwarding={live.path_taken_matches?.ospf === true}
               />
               <RouteCard
-                title="AI (Random Forest selection)"
+                title={`AI (${live.model} selection)`}
                 tone="accent"
                 report={live.ai}
                 segments={live.ai.segments}
@@ -1178,7 +1276,7 @@ export const AnalyticsView: React.FC<{
               <Link2 className="w-4 h-4 text-accent" />
               Interface counters on the {METHODS.find((m) => m.key === method)?.label} path
             </h3>
-            {ospfLinks.length === 0 ? (
+            {activeLinks.length === 0 ? (
               <p className="text-sm text-ink-faint font-mono">
                 No interface on this path could be resolved.
               </p>
@@ -1200,7 +1298,7 @@ export const AnalyticsView: React.FC<{
                     </tr>
                   </thead>
                   <tbody>
-                    {ospfLinks.map((link, index) => (
+                    {activeLinks.map((link, index) => (
                       <tr key={`${link.container}-${link.interface}-${index}`}>
                         <td className="font-mono text-ink">
                           {link.from} → {link.to}
@@ -1244,6 +1342,13 @@ export const AnalyticsView: React.FC<{
               <Cpu className="w-4 h-4 text-ai" />
               Candidate paths scored by {live.model}
             </h3>
+            {/* These are estimates from the graph, not readings from a wire.
+                Only the chosen path is measured; saying so is what keeps the
+                list from reading as six measured paths. */}
+            <p className="text-[11px] text-ink-muted font-mono leading-relaxed">
+              Estimated from {live.ai_ranking_basis}. Only the chosen path is
+              measured on the wire; the rest are model estimates.
+            </p>
             <div className="space-y-2">
               {live.ai_ranking.map((candidate, index) => (
                 <div key={candidate.path.join('>')} className="space-y-1">
@@ -1261,6 +1366,11 @@ export const AnalyticsView: React.FC<{
                       className="h-full rounded-full bg-gradient-to-r from-accent to-info"
                       style={{ width: `${Math.max(2, candidate.quality * 100)}%` }}
                     />
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] font-mono text-ink-faint">
+                    <span>est. latency {ms(candidate.estimated_latency_ms)} ms</span>
+                    <span>est. bandwidth {candidate.estimated_bandwidth_mbps.toFixed(1)} Mbps</span>
+                    <span>est. loss {candidate.estimated_packet_loss_percent.toFixed(2)}%</span>
                   </div>
                 </div>
               ))}

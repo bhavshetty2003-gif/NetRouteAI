@@ -1,8 +1,14 @@
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Device(BaseModel):
+    # `allow_inf_nan=False` rejects a coordinate that is NaN or infinite.
+    # Python's json module accepts both, so a client could send `x: NaN` and
+    # have it sail through validation into the layout maths, where it poisons
+    # every coordinate computed from it.
+    model_config = ConfigDict(allow_inf_nan=False)
+
     id: str
     type: str
     name: Optional[str] = None
@@ -19,15 +25,18 @@ class Link(BaseModel):
     source_subnet: Optional[str] = None
     target_ip: Optional[str] = None
     target_subnet: Optional[str] = None
-    cost: Optional[int] = 1
+    #: OSPF cost. Bounded because the cost is written into the routers' config
+    #: and is used as a graph weight: a negative or absurd cost produced a
+    #: nonsense shortest path rather than an error.
+    cost: Optional[int] = Field(default=1, ge=1, le=65535)
     # Bandwidth, latency and loss default to None, which means *unknown*.
     # They used to default to 100 Mbps / 10 ms / 1%, so a link drawn on the
     # canvas -- which carries a cost and nothing else -- arrived wearing three
     # invented figures, and every metric derived from it repeated them. An
     # unknown value stays unknown until something measures it.
-    bandwidth: Optional[float] = None
-    latency: Optional[float] = None
-    loss_probability: Optional[float] = None
+    bandwidth: Optional[float] = Field(default=None, gt=0, le=100000)
+    latency: Optional[float] = Field(default=None, ge=0, le=600000)
+    loss_probability: Optional[float] = Field(default=None, ge=0, le=100)
 
 
 class Topology(BaseModel):
@@ -87,9 +96,12 @@ class RouteRecommendationResponse(BaseModel):
 class MeasureRequest(BaseModel):
     source: str
     destination: str
-    count: int = 5
+    #: ICMP echo requests to send. Bounded: each one is a real `ping` inside a
+    #: container and the call blocks on all of them.
+    count: int = Field(default=5, ge=1, le=50)
     skip_traceroute: bool = False
-    duration: float = 2.0
+    #: Throughput sample window in seconds.
+    duration: float = Field(default=2.0, ge=0.2, le=30.0)
 
 
 class RawPingRequest(BaseModel):
@@ -109,8 +121,7 @@ class RawPingRequest(BaseModel):
 class LiveAnalyticsRequest(BaseModel):
     source: str = "R1"
     destination: str = "R11"
-    include_convergence: bool = False
-    max_pairs: int = 12
+    max_pairs: int = Field(default=12, ge=1, le=200)
     method: str = "ospf"
     # How many ICMP echo requests to send between the endpoints. The loss
     # percentage is only meaningful above a handful: 6 packets cannot resolve
@@ -118,6 +129,14 @@ class LiveAnalyticsRequest(BaseModel):
     # because each packet is a real `ping` inside a container and the call
     # blocks on all of them.
     packet_count: int = Field(default=12, ge=1, le=50)
+    # `include_convergence` used to be a flag on this request, which made every
+    # measurement that asked for it take a link down and wait up to 60 seconds
+    # for OSPF to re-converge -- so one slow, destructive figure held up the
+    # whole comparison. Convergence is now its own endpoint and its own button
+    # on the page, because it changes the network while it measures it. The
+    # field is still accepted so an older client does not get a 422; it is
+    # simply not acted on.
+    include_convergence: bool = False
 
 
 class RouteSteerRequest(BaseModel):
@@ -139,7 +158,9 @@ class DeployRequest(BaseModel):
     """
 
     topology: dict[str, Any]
-    wait_seconds: float = 90.0
+    #: How long to wait for the routers to converge before verifying. Bounded
+    #: so a request cannot hold a deployment open indefinitely.
+    wait_seconds: float = Field(default=90.0, ge=0.0, le=600.0)
 
 
 class TrafficRequest(BaseModel):
@@ -148,7 +169,7 @@ class TrafficRequest(BaseModel):
     device: str
     #: Ping spacing in seconds. 0.2 is the floor: ping drops privileges and
     #: cannot use a shorter interval without CAP_NET_RAW.
-    interval: float = 0.2
+    interval: float = Field(default=0.2, ge=0.2, le=60.0)
     running: bool = True
 
 
@@ -172,13 +193,16 @@ class OspfAreaRequest(BaseModel):
 class ImpairRequest(BaseModel):
     device: str
     interface: str = "eth0"
-    delay: Optional[float] = None       # ms
-    loss: Optional[float] = None        # %
-    jitter: Optional[float] = None      # ms
-    corrupt: Optional[float] = None     # %
-    duplicate: Optional[float] = None   # %
-    reorder: Optional[float] = None     # %
-    bandwidth: Optional[float] = None   # mbit (tbf)
+    # Percentages are 0-100, delays and jitter are milliseconds, and the tbf
+    # rate is mbit. The bounds are the kernel's own: netem rejects a loss or
+    # corruption percentage above 100, and a negative delay is meaningless.
+    delay: Optional[float] = Field(default=None, ge=0, le=60000)       # ms
+    loss: Optional[float] = Field(default=None, ge=0, le=100)          # %
+    jitter: Optional[float] = Field(default=None, ge=0, le=60000)      # ms
+    corrupt: Optional[float] = Field(default=None, ge=0, le=100)       # %
+    duplicate: Optional[float] = Field(default=None, ge=0, le=100)     # %
+    reorder: Optional[float] = Field(default=None, ge=0, le=100)       # %
+    bandwidth: Optional[float] = Field(default=None, gt=0, le=100000)  # mbit (tbf)
     clear: bool = False
 
 
@@ -191,6 +215,12 @@ class LinkStateRequest(BaseModel):
 class ConvergenceRequest(BaseModel):
     source: str
     destination: str
-    container: str
-    interface: str = "eth0"
-    timeout: float = 60.0
+    # Which link to break. Left optional so the caller does not have to know
+    # the topology: the endpoint picks the first transit interface on the
+    # path between the two routers, which is the link whose failure the
+    # convergence figure is about.
+    container: str | None = None
+    interface: str | None = None
+    #: How long to wait for OSPF to re-converge, in seconds. Bounded because
+    #: the endpoint holds a link *down* for this long.
+    timeout: float = Field(default=60.0, ge=5.0, le=300.0)

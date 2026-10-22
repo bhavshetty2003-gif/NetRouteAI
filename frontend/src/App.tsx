@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Brain, X, XCircle } from 'lucide-react';
 import {
   ActiveNavTab,
@@ -13,7 +13,6 @@ import {
   NetworkInterface,
   Packet,
   PacketGeneratorConfig,
-  PacketHop,
   PacketSimulationState,
 } from './types/network';
 import {
@@ -40,7 +39,6 @@ import {
   type DeployState,
   type DeployTopologyPayload,
 } from './utils/api';
-import { classfulMaskFor } from './utils/validation';
 import { createPacket, advancePacket } from './utils/simulationEngine';
 import { LiveMetricsPanel } from './components/LiveMetricsPanel';
 import { LabDeployBar } from './components/LabDeployBar';
@@ -190,11 +188,14 @@ export default function App() {
   const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
 
   // Lab deploy state — the drawn topology becomes the lab that gets measured
-  const [plan, setPlan] = useState<DeployResult | null>(null);
+  const [, setPlan] = useState<DeployResult | null>(null);
   const [deployState, setDeployState] = useState<DeployState | null>(null);
   const [isPlanning, setIsPlanning] = useState<boolean>(false);
   const [isDeploying, setIsDeploying] = useState<boolean>(false);
   const [labMessage, setLabMessage] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
+  /** Why the canvas could not be written to this browser's storage, when it
+   *  could not. Shown in the designer so a failed save is never silent. */
+  const [storageError, setStorageError] = useState<string | null>(null);
 
   // Packet Simulation State (legacy single-packet, kept for compatibility)
   const [simulationState, setSimulationState] = useState<PacketSimulationState>({
@@ -211,6 +212,16 @@ export default function App() {
 
   // Multi-packet simulation state
   const [packets, setPackets] = useState<Packet[]>([]);
+  /** The same packets, held in a ref.
+   *
+   *  The tick loop has to read the current set and then write back *both* the
+   *  packets and the cable counters. Doing that with two state updaters means
+   *  calling one from inside the other, and React runs an updater during the
+   *  render phase -- so `setCables` called from inside `setPackets`'s updater
+   *  updated state while rendering, which React warns about and which can
+   *  drop the update. A ref gives the loop a consistent snapshot to work
+   *  from, and every write goes through one place. */
+  const packetsRef = useRef<Packet[]>([]);
   const [packetGeneratorConfig, setPacketGeneratorConfig] = useState<PacketGeneratorConfig>({
     packetCount: 100,
     intervalMs: 100,
@@ -270,21 +281,26 @@ export default function App() {
   /* Persist automatically. This is what makes "the topology I last drew" come
    * back, and it deliberately records an *empty* canvas too: clearing the
    * workspace and signing out must produce a blank canvas on the way back in,
-   * not a resurrection of what was deleted. */
+   * not a resurrection of what was deleted.
+   *
+   * A save that fails is reported. Storage can be blocked or full, and a
+   * canvas that was not written looks exactly like one that was until the
+   * next sign-in -- which is far too late to say "your work is gone". */
   useEffect(() => {
     if (userId === null || hydratedFor !== userId) return;
-    saveTopology(userId, { devices, cables, annotations });
+    const result = saveTopology(userId, { devices, cables, annotations });
+    if (!result.ok) setStorageError(result.error ?? 'The canvas could not be saved.');
   }, [userId, hydratedFor, devices, cables, annotations]);
 
   // Multi-packet tick loop — advances all active packets
   useEffect(() => {
     const tick = () => {
-      setPackets((prev) => {
-        if (prev.length === 0) return prev;
+      const current = packetsRef.current;
+      if (current.length > 0) {
         const cableUpdates = new Map<string, number>();
-        const updated = prev.map((packet) => {
+        const updated = current.map((packet) => {
           if (packet.status !== 'routing' && packet.status !== 'transmitting') return packet;
-          const { packet: advanced, cableUpdates: updates } = advancePacket(packet, cables, devices);
+          const { packet: advanced, cableUpdates: updates } = advancePacket(packet, cables);
           updates.forEach((delta, cableId) => {
             cableUpdates.set(cableId, (cableUpdates.get(cableId) || 0) + delta);
           });
@@ -301,8 +317,9 @@ export default function App() {
             })
           );
         }
-        return updated;
-      });
+        packetsRef.current = updated;
+        setPackets(updated);
+      }
       packetTickRef.current = setTimeout(tick, 16);
     };
     packetTickRef.current = setTimeout(tick, 16);
@@ -325,7 +342,11 @@ export default function App() {
       }
       const packet = createPacket(config.sourceId, config.destinationId, devices, cables);
       if (packet) {
-        setPackets((prev) => [...prev, packet]);
+        // The ref is the loop's snapshot, so a packet added here has to be in
+        // the ref too or the next tick would overwrite it.
+        const next = [...packetsRef.current, packet];
+        packetsRef.current = next;
+        setPackets(next);
       }
       sent++;
       packetGenIntervalRef.current = setTimeout(sendPacket, config.intervalMs);
@@ -350,8 +371,13 @@ export default function App() {
    * these two buttons are explicit re-writes rather than the only save. They
    * stay because "where is my work kept" should have a visible answer. */
   const handleSaveTopology = () => {
-    saveTopology(userId, { devices, cables, annotations });
-    alert('Network topology & annotations saved for this account.');
+    const result = saveTopology(userId, { devices, cables, annotations });
+    if (result.ok) {
+      setStorageError(null);
+      alert('Network topology & annotations saved for this account.');
+    } else {
+      setStorageError(result.error ?? 'The canvas could not be saved.');
+    }
   };
 
   const handleLoadTopology = () => {
@@ -504,28 +530,21 @@ export default function App() {
 
   // Add Device from Palette or click
   const handleAddDevice = (type: DeviceType, atX?: number, atY?: number) => {
-    const existingTypeCount = devices.filter((d) => d.type === type).length + 1;
     let prefix = 'PC';
     let defaultModel = 'Generic Workstation';
     let defaultIos = 'NetOS 11.4 Workstation Edition';
     let defaultInterfaces: NetworkInterface[] = [];
-    let defaultIp = `192.168.1.${10 + existingTypeCount}`;
-    let defaultGateway = '192.168.1.1';
 
     if (type === 'router') {
       prefix = 'R';
       defaultModel = 'Cisco 2911 Integrated Services Router';
       defaultIos = 'Cisco IOS 15.5(3)M4b UNIVERSALK9';
       defaultInterfaces = createRouterInterfaces(8);
-      defaultIp = `192.168.${existingTypeCount}.1`;
-      defaultGateway = '0.0.0.0';
     } else if (type === 'switch') {
       prefix = 'SW';
       defaultModel = 'Cisco Catalyst 2960-24TT';
       defaultIos = 'Cisco IOS 15.0(2)SE4 LANBASEK9';
       defaultInterfaces = createSwitchInterfaces(4);
-      defaultIp = `192.168.1.${existingTypeCount + 1}`;
-      defaultGateway = '192.168.1.1';
     } else {
       defaultInterfaces = createPCInterfaces();
     }
@@ -548,11 +567,17 @@ export default function App() {
       x,
       y,
       status: 'running',
-      ipAddress: defaultIp,
-      // The mask follows the address's class (192.168.x.x -> 255.255.255.0),
-      // the same rule the properties panel and the backend allocator use.
-      subnetMask: classfulMaskFor(defaultIp),
-      gateway: defaultGateway,
+      // A device that has not been linked has no address. It used to be given
+      // one here -- 192.168.1.10 for a PC, 192.168.N.1 for a router, with
+      // 192.168.1.1 as its gateway -- and the canvas printed that address
+      // under the device as if it were allocated. It never was: the backend
+      // allocates the addresses when a link is drawn, and the plan is adopted
+      // onto the canvas, so an invented address here could disagree with the
+      // one the routers really hold. Empty means "not assigned yet", and the
+      // plan fills it in.
+      ipAddress: '',
+      subnetMask: '',
+      gateway: '',
       macAddress: `00:1B:D4:${Math.floor(Math.random() * 89 + 10)}:${Math.floor(
         Math.random() * 89 + 10
       )}:${Math.floor(Math.random() * 89 + 10)}`,
@@ -913,10 +938,24 @@ export default function App() {
     try {
       const result = await deployLab(buildDeployPayload());
       adoptPlan(result, cables);
+      // The deploy does not return until OSPF has finished learning the
+      // topology, so the lab it hands over is one the Analytics page can
+      // measure. When the wait ran out before the tables settled, that is
+      // said plainly rather than left to be discovered as an unreachable
+      // pair later.
+      const convergence = result.convergence;
+      const convergenceNote = !convergence
+        ? ''
+        : convergence.converged
+          ? ` OSPF finished converging after ${convergence.waited_seconds.toFixed(0)}s, so the lab is ready to measure.`
+          : ` The lab is running, but OSPF had not finished converging after ${convergence.waited_seconds.toFixed(0)}s${
+              convergence.detail ? ` (${convergence.detail})` : ''
+            }.`;
       setLabMessage({
-        kind: 'ok',
+        kind: convergence && !convergence.converged ? 'bad' : 'ok',
         text:
           `Lab built from this canvas: ${result.routers.length} routers, ${result.links.length} links, areas ${result.areas.join(', ')}. Every address, cost and area was read back from the routers before this returned.` +
+          convergenceNote +
           (result.notes?.length ? ` ${result.notes.join(' ')}` : ''),
       });
       setDeployState({
@@ -1111,9 +1150,19 @@ export default function App() {
       if (index === -1 || index === sorted.length - 1) return prev;
       const current = sorted[index];
       const next = sorted[index + 1];
-      const tempOrder = current.layerOrder;
-      current.layerOrder = next.layerOrder + 1;
-      return [...sorted];
+      // The two layer orders are *swapped*. The old code overwrote the
+      // current one with `next + 1`, which can give two annotations the same
+      // layerOrder -- and a tie sorts arbitrarily, so "bring forward" could
+      // silently leave the annotation where it was.
+      return prev
+        .map((a) =>
+          a.id === current.id
+            ? { ...a, layerOrder: next.layerOrder }
+            : a.id === next.id
+              ? { ...a, layerOrder: current.layerOrder }
+              : a
+        )
+        .sort((a, b) => a.layerOrder - b.layerOrder);
     });
   };
 
@@ -1124,8 +1173,16 @@ export default function App() {
       if (index <= 0) return prev;
       const current = sorted[index];
       const prevItem = sorted[index - 1];
-      current.layerOrder = Math.max(0, prevItem.layerOrder - 1);
-      return [...sorted];
+      // The mirror of the swap above, for the same reason.
+      return prev
+        .map((a) =>
+          a.id === current.id
+            ? { ...a, layerOrder: prevItem.layerOrder }
+            : a.id === prevItem.id
+              ? { ...a, layerOrder: current.layerOrder }
+              : a
+        )
+        .sort((a, b) => a.layerOrder - b.layerOrder);
     });
   };
 
@@ -1562,6 +1619,20 @@ export default function App() {
               onTeardown={handleTeardown}
             />
 
+            {/* A canvas that could not be written to storage. Shown here,
+                over the canvas, because the failure is invisible otherwise:
+                the workspace still works, and nothing is lost until the next
+                sign-in. */}
+            {storageError && (
+              <div
+                id="storage-error-banner"
+                className="absolute top-3 left-1/2 -translate-x-1/2 z-30 max-w-lg rounded-xl border border-bad/50 bg-bad-soft/95 px-4 py-2.5 text-xs text-ink shadow-lg"
+              >
+                <span className="font-bold text-bad">Not saved · </span>
+                <span className="font-mono text-ink-soft">{storageError}</span>
+              </div>
+            )}
+
             {/* Core Designer 3-Column Split: Device Palette | Canvas | Properties Panel */}
             <div className="relative flex-1 flex h-full overflow-hidden">
               {/* Device Palette */}
@@ -1630,7 +1701,6 @@ export default function App() {
                 }}
                 onAddAnnotation={handleAddAnnotation}
                 onUpdateAnnotation={handleUpdateAnnotation}
-                onDeleteAnnotation={handleDeleteAnnotation}
                 onDuplicateAnnotation={handleDuplicateAnnotation}
                 onBringForwardAnnotation={handleBringForwardAnnotation}
                 onSendBackwardAnnotation={handleSendBackwardAnnotation}
@@ -1719,11 +1789,29 @@ export default function App() {
                       <div className="text-xs text-ink-soft mt-0.5 font-mono">
                         {aiRouteResult.best_route.join(' → ')}
                       </div>
-                      <div className="flex items-center gap-3 mt-1 text-[10px] text-ink-muted font-mono">
-                        <span>Latency: {aiRouteResult.latency}ms</span>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[10px] text-ink-muted font-mono">
+                        {/* Every one of these is optional. They used to be
+                            printed unconditionally, so a path whose latency
+                            was unknown rendered "Latency: ms" and one with no
+                            bandwidth rendered "Bandwidth:  Mbps". A figure
+                            that does not exist is left out, not shown empty. */}
+                        {typeof aiRouteResult.latency === 'number' && (
+                          <span>Latency: {aiRouteResult.latency} ms</span>
+                        )}
                         <span>Hops: {aiRouteResult.hop_count}</span>
                         <span>Cost: {aiRouteResult.total_cost}</span>
-                        <span>Bandwidth: {aiRouteResult.metrics?.bandwidth} Mbps</span>
+                        {typeof aiRouteResult.metrics?.bandwidth === 'number' && (
+                          <span>Bandwidth: {aiRouteResult.metrics.bandwidth} Mbps</span>
+                        )}
+                        {typeof aiRouteResult.metrics?.throughput === 'number' && (
+                          <span>Throughput: {aiRouteResult.metrics.throughput} Mbps</span>
+                        )}
+                      </div>
+                      {/* Whether the figures above were measured or modelled
+                          is the difference between a reading and an estimate,
+                          so it is stated rather than left to be guessed. */}
+                      <div className="text-[10px] text-ink-faint font-mono mt-1">
+                        {aiRouteResult.measurement_note || aiRouteResult.measurement_basis}
                       </div>
                     </div>
                     <button
@@ -1731,6 +1819,7 @@ export default function App() {
                         setAiRouteResult(null);
                         setAiRoutePair(null);
                       }}
+                      aria-label="Dismiss the AI route analysis"
                       className="p-1 rounded-lg text-ink-faint hover:text-ink-soft hover:bg-panel transition-colors cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -1764,6 +1853,7 @@ export default function App() {
                     </div>
                     <button
                       onClick={() => setAiError(null)}
+                      aria-label="Dismiss the AI analysis error"
                       className="p-1 rounded-lg text-ink-faint hover:text-ink-soft hover:bg-panel transition-colors cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />

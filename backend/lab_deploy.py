@@ -50,6 +50,14 @@ COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 # container name never drift apart.
 _ROUTER_ID = re.compile(r"^r(\d+)$", re.IGNORECASE)
 
+# A router's display name is written into `frr.conf` as `hostname <name>`, and
+# its router-id is written as `ospf router-id <id>` and pushed through `vtysh`.
+# Both are text taken from the request body, so both are checked before they
+# reach the config file: a name containing a newline would otherwise append
+# whatever followed it as extra FRR configuration, and a router-id is an IPv4
+# address by definition.
+_ROUTER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
 # Address classes. The designer picks a class per link and the mask follows from
 # it, so "Class C" means /24 without anyone typing a prefix. Each class draws
 # from its own block so all three can be used in one topology without their
@@ -89,7 +97,6 @@ _FIRST_HOST = 2
 # interface on the routers. Twelve routers are configured and read back in one
 # pass, so this is multiplied by the retry count in `configure`.
 _SETTLE_SECONDS = 8
-_CONVERGE_SECONDS = 12
 
 # How long to let FRR breathe between pushing the configuration and reading it
 # back. A daemon that `watchfrr` restarts while the push is in flight comes
@@ -167,6 +174,81 @@ def _client() -> docker.DockerClient:
         raise DeployError(f"Docker daemon unreachable: {exc}") from exc
 
 
+def _router_name(raw: Any, fallback: str) -> tuple[str, str | None]:
+    """A router's display name, made safe before it reaches `frr.conf`.
+
+    The name becomes the line `hostname <name>` in the router's config file.
+    FRR's `hostname` takes a single word, so a name carrying a space is not
+    accepted by the daemon -- and a name carrying a newline would put whatever
+    followed it on the next line of that file as a configuration line of its
+    own.
+
+    So the name is *sanitised* rather than refused: characters FRR will not
+    take become dashes. Refusing the whole deployment over a cosmetic field
+    would mean a user who typed "Edge A" could not deploy at all. The second
+    value returned is a note saying the name was changed, so the change is
+    visible rather than silent.
+    """
+    name = str(raw or "").strip()
+    if not name:
+        return fallback, None
+    if _ROUTER_NAME.match(name):
+        return name, None
+
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._")
+    cleaned = re.sub(r"-{2,}", "-", cleaned)
+    if not cleaned:
+        cleaned = fallback
+    if not cleaned[0].isalnum():
+        cleaned = f"r-{cleaned}"
+    cleaned = cleaned[:64]
+    note = (
+        f"Router '{_one_line(name)}' is not a valid FRR hostname; it was "
+        f"deployed as '{cleaned}'."
+    )
+    return cleaned, note
+
+
+def _one_line(text: str) -> str:
+    """A single-line rendering of a name, for a message that is read on a page."""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _router_id(raw: Any) -> str:
+    """An OSPF router-id, checked before it reaches `frr.conf` or `vtysh`.
+
+    A router-id is an IPv4 address. Validating it as one catches a value with a
+    newline in it -- which would otherwise be pushed as a second `vtysh` command
+    -- as well as a value that FRR would reject with a message nobody reads.
+    An empty value means "not supplied"; the caller fills one in.
+    """
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    try:
+        return str(ipaddress.IPv4Address(value))
+    except ipaddress.AddressValueError as exc:
+        raise DeployError(
+            f"OSPF router-id '{value}' is not a valid IPv4 address"
+        ) from exc
+
+
+def _generated_router_id(index: int) -> str:
+    """The router-id used when the caller supplied none: `1.1.1.1`, `2.2.2.2`, …
+
+    Each octet is the router's position, so the ids are unique and obviously
+    not addresses of anything. There are only 255 usable octets, so a
+    topology larger than that is refused rather than configured with an
+    address the kernel would not accept.
+    """
+    if index > 255:
+        raise DeployError(
+            f"A topology of {index} routers is too large: OSPF router-ids are "
+            f"generated from the router's position and only 255 are available"
+        )
+    return f"{index}.{index}.{index}.{index}"
+
+
 # --------------------------------------------------------------------------- #
 # Planning
 # --------------------------------------------------------------------------- #
@@ -182,6 +264,10 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
 
     routers: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
+    # Anything the plan had to change, said out loud. A link that was moved off
+    # a clashing address is reported rather than quietly rewritten; so is a
+    # router name that had to be made into a valid FRR hostname.
+    notes: list[str] = []
     for raw in routers_in:
         device_id = str(raw.get("id") or "").strip()
         if not device_id:
@@ -198,13 +284,16 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
         if key in seen_ids:
             raise DeployError(f"Duplicate router id '{device_id}'")
         seen_ids.add(key)
+        name, name_note = _router_name(raw.get("name"), key)
+        if name_note:
+            notes.append(name_note)
         routers.append(
             {
                 "id": key,
                 "container": f"r{match.group(1)}",
-                "name": str(raw.get("name") or key),
+                "name": name,
                 "area": _normalise_area(raw.get("area", 0)),
-                "router_id": str(raw.get("router_id") or "").strip(),
+                "router_id": _router_id(raw.get("router_id")),
             }
         )
     if not routers:
@@ -215,7 +304,7 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
     # Canonical order so eth assignment and container numbering are stable.
     routers.sort(key=lambda r: int(r["container"][1:]))
     for index, router in enumerate(routers, start=1):
-        router["router_id"] = router["router_id"] or f"{index}.{index}.{index}.{index}"
+        router["router_id"] = router["router_id"] or _generated_router_id(index)
 
     by_id = {r["id"]: r for r in routers}
 
@@ -229,9 +318,6 @@ def resolve_plan(topology: dict[str, Any]) -> dict[str, Any]:
     # machine's own network would put the lab's traffic in front of the
     # machine's router and leave it with no connection at all.
     reserved = reserved_networks(exclude_project=COMPOSE_PROJECT)
-    # Anything the plan had to change, said out loud. A link that was moved off
-    # a clashing address is reported rather than quietly rewritten.
-    notes: list[str] = []
 
     # Reserve every subnet the caller already holds BEFORE allocating anything.
     #
@@ -887,6 +973,55 @@ def _area_to_int(text: str) -> int:
         return -1
 
 
+def _exec_output(result) -> str:
+    """Flatten an `exec_run` result into text.
+
+    `exec_run` without `demux` returns bytes, but a caller may hand over a
+    demultiplexed result whose output is a `(stdout, stderr)` tuple.
+    """
+    output = getattr(result, "output", b"") or b""
+    if isinstance(output, (tuple, list)):
+        output = output[0] if output else b""
+    if isinstance(output, bytes):
+        return output.decode(errors="replace")
+    return str(output)
+
+
+def _exec_in_container(client, container: str, cmd: list[str], timeout: int = 15):
+    """Run a command in a container, returning (exit_code, output).
+
+    Returns ``None`` when the container itself could not be reached, which is
+    a different thing from a command that ran and failed.
+
+    The Docker SDK has no timeout of its own -- `exec_run` refuses one and
+    `exec_start` has no such argument either -- so a command that never
+    returned would hold the whole HTTP request open until the daemon's own
+    60-second read timeout fired. The limit is applied *inside* the container
+    with `timeout`, which is what actually stops the process.
+
+    Not every image ships a `timeout` binary. When it is missing the command
+    never ran, so it is run again unwrapped rather than reporting a failure
+    that has nothing to do with the command itself.
+    """
+    try:
+        target = client.containers.get(container)
+    except (DockerException, NotFound):
+        return None
+    try:
+        result = target.exec_run(["timeout", "-k", "2", str(int(timeout))] + cmd)
+        code = getattr(result, "exit_code", None)
+        text = _exec_output(result)
+        if code == 127 and "timeout" in text.lower():
+            result = target.exec_run(cmd)
+            code = getattr(result, "exit_code", None)
+            text = _exec_output(result)
+        return (code if code is not None else 1), text
+    except (DockerException, NotFound):
+        return None
+    except Exception as exc:  # noqa: BLE001 - docker raises many shapes
+        return 1, str(exc)
+
+
 def _vtysh(client, container: str, commands: list[str]) -> tuple[int, str]:
     """Run a configuration script inside a router's vtysh.
 
@@ -899,22 +1034,14 @@ def _vtysh(client, container: str, commands: list[str]) -> tuple[int, str]:
     script = "configure terminal\n" + "".join(f"{line}\n" for line in commands) + "end\n"
     # Safe as a printf format string: OSPF configuration contains no `%`.
     shell_command = f"printf '{script}' | vtysh"
-    result = client.containers.get(container).exec_run(["sh", "-c", shell_command])
-    output = getattr(result, "output", b"") or b""
-    if isinstance(output, (tuple, list)):
-        output = output[0] if output else b""
-    return result.exit_code, output.decode() if isinstance(output, bytes) else str(output)
+    result = _exec_in_container(client, container, ["sh", "-c", shell_command])
+    return result if result is not None else (1, "")
 
 
 def _read_ospf_interfaces(client, container: str) -> dict[str, tuple[str, str]]:
     """Read {iface: (area, cost)} from `show ip ospf interface`."""
-    result = client.containers.get(container).exec_run(
-        ["vtysh", "-c", "show ip ospf interface"]
-    )
-    output = getattr(result, "output", b"") or b""
-    if isinstance(output, (tuple, list)):
-        output = output[0] if output else b""
-    text = output.decode() if isinstance(output, bytes) else str(output)
+    result = _exec_in_container(client, container, ["vtysh", "-c", "show ip ospf interface"])
+    text = result[1] if result is not None else ""
 
     found: dict[str, tuple[str, str]] = {}
     current: str | None = None
@@ -1203,18 +1330,10 @@ def _wait_for_frr(client, containers: list[str], deadline: float) -> None:
     """
     for container in containers:
         while True:
-            try:
-                result = client.containers.get(container).exec_run(
-                    ["vtysh", "-c", "show ip ospf"]
-                )
-                output = getattr(result, "output", b"") or b""
-                if isinstance(output, (tuple, list)):
-                    output = output[0] if output else b""
-                text = output.decode() if isinstance(output, bytes) else str(output)
-                if "OSPF Routing Process" in text or "not enabled" in text:
-                    break
-            except (DockerException, NotFound):
-                pass
+            result = _exec_in_container(client, container, ["vtysh", "-c", "show ip ospf"])
+            text = result[1] if result is not None else ""
+            if "OSPF Routing Process" in text or "not enabled" in text:
+                break
             if time.time() >= deadline:
                 raise DeployError(
                     f"{container} did not answer 'show ip ospf' in time; "
@@ -1240,6 +1359,252 @@ def deployed_lab_running() -> bool:
     if not plan:
         return False
     return all(r["container"] in names for r in plan["routers"])
+
+
+# --------------------------------------------------------------------------- #
+# Convergence
+# --------------------------------------------------------------------------- #
+
+# How long to wait for OSPF to finish computing routes before the lab is
+# declared ready. Two clocks are in play: OSPF's hello interval is 10 s, so an
+# adjacency cannot form sooner than that after the configuration is pushed, and
+# the SPF then needs a few more seconds to flood the LSAs and install the
+# routes. 90 s covers a full reconvergence of a large topology with room to
+# spare, and the deploy's own container-start budget is separate.
+_CONVERGE_TIMEOUT = 90.0
+
+# How often to look at the routing tables while waiting.
+_CONVERGE_POLL = 2.0
+
+# How long the routing tables have to stop changing before the lab is called
+# converged.
+#
+# This is not a guess about how long OSPF takes -- it is the window that
+# separates "the SPF has finished" from "the SPF has not started yet". A
+# freshly configured router shows only its directly connected routes (3 of
+# them for a router with three links) and *that count does not change* for
+# several seconds while the adjacencies are still forming. A wait that only
+# asked "have the counts moved since the last poll?" therefore returned while
+# the network had learned nothing at all. Measured on this lab, the counts
+# were 3 from t+6s to t+12s while the adjacencies only reached Full at t+10s,
+# with the real route counts arriving at t+15s.
+#
+# So the wait has two parts, and both have to hold:
+#
+#   * every router has formed all of its adjacencies (the plan says how many
+#     it should have), and
+#   * the routing tables have not changed for this long, counting from the
+#     moment the last adjacency appeared.
+_CONVERGE_SETTLE = 8.0
+
+
+def _ospf_route_count(client, container: str) -> int:
+    """How many OSPF routes a router currently has in its table.
+
+    This is the convergence signal, and it is deliberately a *count* rather
+    than a set of prefixes: how many routes a router should have depends on
+    which areas it can see, and that is a property of the topology (a stub
+    area's router legitimately has fewer routes than its neighbours). Counting
+    the entries that are there says "has it stopped changing yet?", which is
+    the question that actually matters.
+
+    The count includes the "is directly connected" entries, because those are
+    OSPF's own view of an interface it is running on -- and their absence is
+    how a router that is not running OSPF on every one of its links gives
+    itself away.
+    """
+    return _vtysh_count(client, container, "show ip route ospf", _is_ospf_route_line)
+
+
+def _ospf_neighbour_count(client, container: str) -> int:
+    """How many OSPF neighbours a router has reached the Full state.
+
+    An adjacency is the precondition for learning anything at all: a router
+    with no Full neighbour has nothing to run the SPF over, so its routing
+    table can look "stable" while the network is still coming up. Counting
+    the Full neighbours is how the wait knows the network is actually running
+    rather than merely configured.
+    """
+    return _vtysh_count(client, container, "show ip ospf neighbor", _is_ospf_neighbour_line)
+
+
+def _vtysh_count(client, container: str, command: str, matcher) -> int:
+    """Run `vtysh -c <command>` in a container and count the lines that match.
+
+    Returns -1 when the container cannot be reached, which is how "no answer"
+    is told apart from "an answer of zero".
+    """
+    result = _exec_in_container(client, container, ["vtysh", "-c", command])
+    if result is None:
+        # The container could not be reached at all.
+        return -1
+    _, text = result
+    return sum(1 for line in text.splitlines() if matcher(line))
+
+
+def _is_ospf_route_line(line: str) -> bool:
+    """Is this line an OSPF route in `show ip route ospf`?
+
+    Every route line starts with "O" in the route-code column and carries the
+    "[distance/metric]" bracket. The "Codes:" legend that vtysh prints above
+    the table starts with "C" and has neither, so it is not counted.
+    """
+    stripped = line.lstrip()
+    return stripped.startswith("O") and "[" in stripped and "/" in stripped
+
+
+def _is_ospf_neighbour_line(line: str) -> bool:
+    """Is this line a neighbour in the Full state?
+
+    A neighbour row starts with the neighbour's router-id, so it begins with
+    a digit; the column heading does not. Only "Full" counts: a neighbour
+    that is still "2-Way" or "Init" has not exchanged database descriptions
+    and the SPF cannot use it yet.
+    """
+    stripped = line.strip()
+    return bool(stripped) and stripped[0].isdigit() and "Full" in stripped
+
+
+def _expected_adjacency_counts(plan: dict[str, Any]) -> dict[str, int]:
+    """How many OSPF adjacencies each router should form, from the plan.
+
+    One adjacency per link whose *both* ends are routers: the plan gives a
+    link's two ends the same area, and OSPF only forms an adjacency between
+    interfaces in the same area, so every router-router link yields exactly
+    one adjacency. A link to a host -- a PC or a switch on a LAN -- has no
+    OSPF on the far end and must not be counted, or the wait would never
+    finish.
+
+    The same number is also the number of "is directly connected" OSPF routes
+    the router should have, which is why it doubles as a floor for the route
+    count.
+    """
+    routers = plan.get("routers", [])
+    by_id = {r["id"]: r for r in routers}
+    degree: dict[str, int] = {r["id"]: 0 for r in routers}
+    for link in plan.get("links", []):
+        source = link.get("source")
+        target = link.get("target")
+        if source in degree and target in degree:
+            degree[source] += 1
+            degree[target] += 1
+    return {by_id[rid]["container"]: count for rid, count in degree.items()}
+
+
+def wait_for_convergence(
+    client, plan: dict[str, Any], timeout: float = _CONVERGE_TIMEOUT
+) -> dict[str, Any]:
+    """Wait until the routers have finished learning the topology.
+
+    **Why this exists.** A deploy that returns while OSPF is still computing
+    routes reports a lab that is ready, and the Analytics page measures it
+    immediately -- and gets "R1 cannot reach R10 at all", because R1's table
+    does not have R10's subnet *yet*. That is a false negative produced by
+    asking a network that has not finished starting. It looked like a routing
+    fault: the same pair measured perfectly a minute later.
+
+    **What "finished" means here.** Two conditions, both of which have to hold
+    at the same moment:
+
+    1. *Every adjacency is up.* The plan says how many neighbours each router
+       should have -- one per router-to-router link -- and each of them must
+       have reached the Full state. A router that is not running OSPF on a
+       link can never satisfy this, which is what makes a misconfigured lab
+       (the kind `reapply()` exists to fix) fail the wait instead of quietly
+       reporting itself as converged.
+
+    2. *The routing tables have stopped changing.* A router's route count is
+       compared with the count from the previous poll; when no router's count
+       has moved for `_CONVERGE_SETTLE` seconds, the SPF has installed
+       everything it is going to install.
+
+    The settle window is counted from the later of the two events -- the last
+    change in the tables, and the moment the last adjacency appeared -- so
+    "the tables were already quiet before OSPF started" cannot be mistaken
+    for "the tables have finished".
+
+    The alternative -- "wait until every router has N routes" -- cannot be
+    written, because N is a property of the area layout rather than of the
+    topology: a router in a stub area legitimately has fewer routes than one
+    in the backbone, and a topology with no area boundaries has a different
+    number again.
+
+    The timeout is a bound, not an expectation: if the tables are still
+    moving when it expires, the lab is returned anyway with the state it
+    reached, because a lab that is up and slowly settling is more useful than
+    no lab.
+    """
+    routers = plan.get("routers", [])
+    containers = [r["container"] for r in routers]
+    expected = _expected_adjacency_counts(plan)
+    started = time.time()
+    deadline = started + timeout
+    previous: dict[str, int] = {}
+    last_change = started
+    adjacencies_up_since: float | None = None
+    routes: dict[str, int] = {}
+    neighbours: dict[str, int] = {}
+
+    while True:
+        now = time.time()
+        routes = {}
+        neighbours = {}
+        for container in containers:
+            count = _ospf_route_count(client, container)
+            if count >= 0:
+                routes[container] = count
+            nbrs = _ospf_neighbour_count(client, container)
+            if nbrs >= 0:
+                neighbours[container] = nbrs
+
+        if routes != previous:
+            previous = dict(routes)
+            last_change = now
+
+        # Every router answered, every router has formed all the adjacencies
+        # the plan says it should have, and every router is running OSPF on
+        # every one of its links (which is what the directly-connected routes
+        # in the table prove).
+        adjacency_ready = (
+            bool(containers)
+            and len(routes) == len(containers)
+            and len(neighbours) == len(containers)
+            and all(
+                neighbours[container] >= expected.get(container, 0)
+                and routes[container] >= expected.get(container, 0)
+                for container in containers
+            )
+        )
+        if adjacency_ready and adjacencies_up_since is None:
+            adjacencies_up_since = now
+
+        quiet_since = max(last_change, adjacencies_up_since or last_change)
+        if adjacency_ready and (now - quiet_since) >= _CONVERGE_SETTLE:
+            return {
+                "converged": True,
+                "waited_seconds": round(now - started, 1),
+                "settled_seconds": round(now - quiet_since, 1),
+                "routes": routes,
+                "neighbours": neighbours,
+                "expected_neighbours": expected,
+            }
+
+        if now >= deadline:
+            return {
+                "converged": False,
+                "waited_seconds": round(now - started, 1),
+                "settled_seconds": round(now - quiet_since, 1),
+                "routes": routes,
+                "neighbours": neighbours,
+                "expected_neighbours": expected,
+                "detail": (
+                    f"The routers did not finish learning the topology within "
+                    f"{timeout:.0f}s. The lab is running, but its routing "
+                    "tables may still be settling."
+                ),
+            }
+
+        time.sleep(_CONVERGE_POLL)
 
 
 def load_record() -> dict[str, Any] | None:
@@ -1393,8 +1758,14 @@ def deploy(topology: dict[str, Any], wait_seconds: float = 90.0) -> dict[str, An
     assignments = configure(plan, client)
     save_plan(plan, assignments)
 
-    # OSPF needs a moment to form adjacencies before anything is worth measuring.
-    time.sleep(_CONVERGE_SECONDS)
+    # OSPF needs a moment to form adjacencies *and to compute the routes
+    # from them*. A fixed sleep was not enough: the deploy returned while the
+    # SPF was still running, and the Analytics page measured the lab straight
+    # away and reported the pair as unreachable -- a false negative from a
+    # network that had not finished starting. The wait is for the routers to
+    # have finished learning the topology, so "deployed" means "ready to
+    # measure".
+    convergence = wait_for_convergence(client, plan)
     return {
         "ok": True,
         "lab_dir": LAB_DIR,
@@ -1404,4 +1775,73 @@ def deploy(topology: dict[str, Any], wait_seconds: float = 90.0) -> dict[str, An
         "areas": plan["areas"],
         "interfaces": assignments,
         "notes": plan.get("notes", []),
+        "convergence": convergence,
     }
+
+
+def reapply() -> dict[str, Any]:
+    """Re-push the planned OSPF configuration onto the lab that is running now.
+
+    Interface names are not stable across a container restart. Docker hands
+    `eth0..ethN` out again in a different order, so a saved frr.conf lands each
+    area and cost on the **wrong interface** -- and FRR accepts that without
+    complaint. The lab then looks perfectly healthy while OSPF is running on
+    the wrong links: the adjacencies never form, the routers learn no routes,
+    and the analytics page measures a network that has not converged. This is
+    not a cosmetic problem; it silently changes every path and every figure.
+
+    `configure()` is the answer to it: it reads the live interface map and
+    addresses each interface by the address its link is supposed to hold,
+    rather than by a guessed index. This function is that same path with no
+    container recreated -- so it is safe to run against a lab that is already
+    up, and it is what a machine restart needs.
+    """
+    plan = load_plan()
+    if not plan:
+        raise DeployError(
+            "No lab has been built from the designer, so there is no "
+            "configuration to re-apply. Deploy one first."
+        )
+
+    client = _client()
+
+    # The containers must all be up: a router that is still starting has no
+    # interfaces to read, and the configuration would be built from a reading
+    # taken before Docker had finished attaching the bridges.
+    missing = [
+        r["container"]
+        for r in plan["routers"]
+        if not _container_is_running(client, r["container"])
+    ]
+    if missing:
+        raise DeployError(
+            "The lab is not fully up: " + ", ".join(missing) + " "
+            + ("is" if len(missing) == 1 else "are") + " not running."
+        )
+
+    assignments = configure(plan, client)
+    save_plan(plan, assignments)
+
+    # The same wait as a deploy: pushing the configuration makes OSPF recompute
+    # its tables, so the lab is only ready to measure once they have settled.
+    convergence = wait_for_convergence(client, plan)
+
+    return {
+        "ok": True,
+        "lab_dir": LAB_DIR,
+        "routers": [
+            {"id": r["id"], "container": r["container"], "area": r["area"]}
+            for r in plan["routers"]
+        ],
+        "links": plan["links"],
+        "areas": plan["areas"],
+        "interfaces": assignments,
+        "convergence": convergence,
+    }
+
+
+def _container_is_running(client, name: str) -> bool:
+    try:
+        return client.containers.get(name).status == "running"
+    except Exception:  # noqa: BLE001 - a missing container is simply not running
+        return False

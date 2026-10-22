@@ -80,6 +80,13 @@ def _exec(
     for vtysh: its `-c` flag runs each argument as a separate command in exec
     mode, so `vtysh -c "configure terminal" -c "ip route ..."` fails with
     "Unknown command" because the second command never runs in config mode.
+
+    `timeout` is enforced, and it has to be: the Docker SDK has no timeout on
+    `exec_run` (its `exec_start` does not accept one either), so a command
+    that never returns would hold the HTTP request open until the daemon's own
+    60-second read timeout fires -- and, worse, a caller that asked for five
+    seconds would sit there for a minute. The limit is applied inside the
+    container with `timeout`, which is what actually stops the process.
     """
     try:
         if isinstance(container, str):
@@ -87,13 +94,28 @@ def _exec(
         if stdin is not None:
             script = "printf %s " + shlex.quote(stdin)
             cmd = ["sh", "-c", f"{script}| {shlex.join(cmd)}"]
+        plain = cmd
+        if timeout is not None and timeout > 0:
+            cmd = ["timeout", "-k", "2", str(int(timeout))] + cmd
         res = container.exec_run(cmd, demux=True)
     except (DockerException, NotFound) as exc:
         return 1, str(exc)
     except Exception as exc:  # noqa: BLE001 - docker raises many shapes
         return 1, str(exc)
 
-    return res.exit_code, _demux(res.output)
+    code, out = res.exit_code, _demux(res.output)
+
+    # `timeout` is not guaranteed to exist in every image. If it is missing the
+    # command never ran, so it is run again without the wrapper rather than
+    # reporting a failure that has nothing to do with the command itself.
+    if code == 127 and "not found" in out.lower() and "timeout" in out.lower():
+        try:
+            res = container.exec_run(plain, demux=True)
+        except Exception as exc:  # noqa: BLE001
+            return 1, str(exc)
+        return res.exit_code, _demux(res.output)
+
+    return code, out
 
 
 def _demux(raw: Any) -> str:
@@ -368,24 +390,39 @@ def probe_traceroute(
     complete trace. That is a measurement artefact, not a routing fact, and left
     unhandled it produced a path with a router missing from it -- the analytics
     page then reported that forwarding did not match OSPF when it had in fact
-    matched. Each retry sends the probe with a longer gap (`-i`), and the most
-    complete run wins, with earlier answers kept for any hop that a later run
-    leaves blank.
+    matched. Each retry sends the probe again, and the most complete run wins,
+    with earlier answers kept for any hop that a later run leaves blank.
+
+    The retry waits a moment first. FRR's ICMP rate limiter is the reason the
+    retry exists, and a retry that starts before the limiter has reset just
+    gets the same silence.
+
+    There is deliberately no `-i` (interval) flag here. The lab images ship
+    BusyBox traceroute, where `-i` means *source interface*, not interval: the
+    command was rejected with "can't bind to interface 1: No such device" on
+    every retry. The gap between retries is made with a sleep instead.
+
+    The first attempt asks for three probes per hop because a hop that answers
+    usually answers all three, and the extra probes are what turn "no reply"
+    into a real measurement. A retry asks for one, because a retry is looking
+    for the hop that was missed, and a hop that answers at all answers the
+    first probe -- while three probes on eleven silent hops cost 33 seconds.
     """
     container = _container(client, container_name)
     best: dict[str, Any] | None = None
     commands: list[str] = []
 
     for attempt in range(max(1, attempts)):
-        # Linux traceroute caps the interval at 1s, so spacing alone cannot fix
-        # rate limiting; what it does fix is sending the probes far enough apart
-        # that the router's limiter has reset before the next one.
-        cmd = ["traceroute", "-n", "-m", str(max_hops), "-w", "1"]
         if attempt:
-            cmd += ["-i", "1", "-q", "1"]
+            time.sleep(1.0)
+        probes = 3 if attempt == 0 else 1
+        cmd = ["traceroute", "-n", "-m", str(max_hops), "-w", "1", "-q", str(probes)]
         cmd += [target_ip]
         commands.append(" ".join(cmd))
-        code, out = _exec(container, cmd, timeout=max_hops + 10)
+        # The wait budget has to cover the whole hop budget: every hop that
+        # answers does so at once, but a hop that does not answers costs the
+        # full `-w` per probe, and there are `max_hops` of them.
+        code, out = _exec(container, cmd, timeout=max_hops * probes + 10)
         parsed = parse_traceroute(out)
         parsed["exit_code"] = code
         best = _merge_traceroute(best, parsed)
@@ -452,52 +489,141 @@ def probe_interfaces(client, container_name: str) -> dict[str, Any]:
 
 
 def probe_resources(client, container_name: str) -> dict[str, Any]:
-    """Collect CPU and memory usage from /proc."""
+    """Collect CPU and memory usage *for this container*.
+
+    This used to read `/proc/stat`, `/proc/meminfo` and `/proc/loadavg` inside
+    the container, and every one of those is the **host's**: Docker does not
+    namespace the memory total or the load average, so ten routers each
+    reported the machine's entire RAM as their own, and the same CPU figure
+    appeared on every device. The numbers looked plausible and were about
+    nothing.
+
+    The daemon's own accounting is per-container, so that is what is read
+    here; the container's own cgroup files are the fallback when the daemon
+    will not serve a stats sample.
+    """
     container = _container(client, container_name)
-    _, stat = _exec(container, ["cat", "/proc/stat"])
-    _, mem = _exec(container, ["cat", "/proc/meminfo"])
-    _, load = _exec(container, ["cat", "/proc/loadavg"])
+
+    stats = None
+    try:
+        stats = container.stats(stream=False)
+    except Exception:  # noqa: BLE001 - the daemon may refuse a sample
+        stats = None
+    if isinstance(stats, dict) and stats.get("cpu_stats"):
+        return _parse_docker_stats(stats, container_name)
+
+    # Fallback: the cgroup counters, which are namespaced even when the
+    # daemon's own accounting is unavailable.
+    cpu = _cgroup_cpu(container)
+    memory = _cgroup_memory(container)
     return {
         "container": container_name,
-        "cpu": _parse_cpu(stat),
-        "memory": _parse_meminfo(mem),
-        "loadavg": load.strip().split()[:3],
+        "cpu": cpu,
+        "memory": memory,
+        "source": "cgroup",
     }
 
 
-def _parse_cpu(stat: str) -> dict[str, Any]:
-    for line in stat.splitlines():
-        if not line.startswith("cpu "):
-            continue
-        parts = [int(x) for x in line.split()[1:] if x.isdigit()]
-        if len(parts) < 4:
-            break
-        user, nice, system, idle = parts[:4]
-        iowait = parts[5] if len(parts) > 5 else 0
-        total = user + nice + system + idle + iowait
-        idle_total = idle + iowait
-        usage = 0.0 if total == 0 else (1 - idle_total / total) * 100
-        return {
-            "usage_percent": round(usage, 2),
-            "user": user,
-            "system": system,
-            "idle": idle,
-        }
-    return {"usage_percent": 0.0, "user": 0, "system": 0, "idle": 0}
+def _parse_docker_stats(stats: dict[str, Any], container_name: str) -> dict[str, Any]:
+    """Turn one `docker stats` sample into the same shape the UI reads."""
+    cpu_stats = stats.get("cpu_stats") or {}
+    precpu_stats = stats.get("precpu_stats") or {}
 
+    def _total(entry: dict[str, Any]) -> int:
+        usage = (entry.get("cpu_usage") or {}).get("total_usage")
+        return int(usage) if isinstance(usage, (int, float)) else 0
 
-def _parse_meminfo(mem: str) -> dict[str, Any]:
-    info: dict[str, Any] = {}
-    for line in mem.splitlines():
-        m = re.match(r"(\w+):\s+(\d+)\s*kB", line)
-        if m:
-            info[m.group(1).lower()] = int(m.group(2))
-    total = info.get("memtotal", 0)
-    avail = info.get("memavailable", info.get("memfree", 0))
+    cpu_delta = _total(cpu_stats) - _total(precpu_stats)
+    system_delta = int(cpu_stats.get("system_cpu_usage") or 0) - int(
+        precpu_stats.get("system_cpu_usage") or 0
+    )
+    online_cpus = int(cpu_stats.get("online_cpus") or 0) or 1
+    usage_percent = 0.0
+    if cpu_delta > 0 and system_delta > 0:
+        usage_percent = round((cpu_delta / system_delta) * online_cpus * 100.0, 2)
+
+    memory_stats = stats.get("memory_stats") or {}
+    usage = int(memory_stats.get("usage") or 0)
+    limit = int(memory_stats.get("limit") or 0)
+    # The reported usage includes the page cache, which is what the daemon
+    # reports and what `docker stats` shows. `usage - cache` is the
+    # container's own memory; the cache is shown alongside it.
+    cache = int(memory_stats.get("stats", {}).get("inactive_file") or 0) if isinstance(
+        memory_stats.get("stats"), dict
+    ) else 0
+    own = max(0, usage - cache)
+
+    memory: dict[str, Any] = {
+        "total_kb": limit // 1024 if limit else 0,
+        "used_kb": usage // 1024,
+        "available_kb": max(0, limit - usage) // 1024 if limit else 0,
+        "usage_percent": round((usage / limit) * 100.0, 2) if limit else 0.0,
+        "cache_kb": cache // 1024,
+        "own_kb": own // 1024,
+    }
+
     return {
-        "total_kb": total,
-        "available_kb": avail,
-        "usage_percent": 0.0 if not total else round((1 - avail / total) * 100, 2),
+        "container": container_name,
+        "cpu": {"usage_percent": usage_percent},
+        "memory": memory,
+        "source": "docker stats",
+    }
+
+
+def _cgroup_cpu(container) -> dict[str, Any]:
+    """CPU time for this container from its cgroup, in milliseconds."""
+    for path, scale, keys in (
+        ("/sys/fs/cgroup/cpu.stat", 1000.0, ("usage_usec",)),
+        ("/sys/fs/cgroup/cpu/cpuacct.usage", 1e-6, ()),
+    ):
+        try:
+            _, out = _exec(container, ["cat", path])
+        except Exception:  # noqa: BLE001
+            continue
+        if not out.strip():
+            continue
+        if keys:
+            for line in out.splitlines():
+                key, _, value = line.partition(" ")
+                if key.strip() in keys and value.strip().isdigit():
+                    return {"usage_ms": int(int(value.strip()) * scale)}
+        elif out.strip().isdigit():
+            # cpuacct.usage is in nanoseconds.
+            return {"usage_ms": int(int(out.strip()) / 1e6)}
+    return {"usage_ms": 0}
+
+
+def _cgroup_memory(container) -> dict[str, Any]:
+    """Memory for this container from its cgroup."""
+    usage = 0
+    limit = 0
+    for current_path, max_path in (
+        ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max"),
+        (
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+        ),
+    ):
+        try:
+            _, cur = _exec(container, ["cat", current_path])
+            _, mx = _exec(container, ["cat", max_path])
+        except Exception:  # noqa: BLE001
+            continue
+        cur = cur.strip()
+        if not cur.isdigit():
+            continue
+        usage = int(cur)
+        mx = mx.strip()
+        # cgroup v2 writes "max" for an unlimited group.
+        limit = 0 if not mx.isdigit() else int(mx)
+        break
+    if not usage:
+        return {"total_kb": 0, "used_kb": 0, "available_kb": 0, "usage_percent": 0.0}
+    return {
+        "total_kb": limit // 1024 if limit else 0,
+        "used_kb": usage // 1024,
+        "available_kb": max(0, limit - usage) // 1024 if limit else 0,
+        "usage_percent": round((usage / limit) * 100.0, 2) if limit else 0.0,
     }
 
 

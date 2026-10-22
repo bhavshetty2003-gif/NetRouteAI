@@ -62,12 +62,22 @@ g.IS_REACT_ACT_ENVIRONMENT = true;
 // Capture the real fetch BEFORE replacing it, or the shim recurses into
 // itself. Only the pathname is logged: a malformed URL from the harness must
 // not be mistaken for a product bug.
+//
+// The request body and the body of a failed response are logged too. A
+// harness that only prints the status code cannot tell "the page asked for
+// the wrong thing" from "the backend said no", and those two are the
+// difference between a product bug and a harness bug.
 const realFetch = globalThis.fetch;
 g.fetch = async (input: any, init?: any) => {
   const url = typeof input === 'string' ? input : String(input?.url ?? input);
   const path = new URL(url, BASE).pathname;
   const res = await realFetch(input, init);
-  console.log(`   [net] ${init?.method ?? 'GET'} ${path} -> ${res.status}`);
+  const reqBody = init?.body ? String(init.body).slice(0, 200) : '';
+  console.log(`   [net] ${init?.method ?? 'GET'} ${path} -> ${res.status} ${reqBody}`);
+  if (!res.ok) {
+    const detail = await res.clone().text();
+    console.log(`         body: ${detail.slice(0, 400)}`);
+  }
   return res;
 };
 

@@ -7,6 +7,8 @@
 #   ./start.sh --no-lab     never touch the lab
 #   ./start.sh --status     what is running right now
 #   ./start.sh --stop       stop the API and the UI
+#   ./start.sh --reapply    put the planned OSPF configuration back onto the
+#                           lab that is running now
 #   ./start.sh --doctor     find the Docker networks that are taking this
 #                           machine's own network, and remove the lab's
 #   ./start.sh --reseat     ask this machine's own network for an address
@@ -15,9 +17,11 @@
 #
 # It installs what is missing (backend venv, node_modules) rather than asking
 # you to, starts both services in the background, waits until they answer, and
-# tells you where the logs are. Nothing here touches a lab that is already
-# running: lab containers are started only when none of them are running, and
-# the app itself owns reconfiguring them (Deploy in the UI).
+# tells you where the logs are. A lab that is already running is left alone --
+# lab containers are started only when none of them are running -- and the one
+# thing that is done to a lab this script starts is to put the planned OSPF
+# configuration back onto it, because a restarted container is handed its
+# interfaces in a different order and the saved config then names the wrong one.
 #
 # --doctor is the repair for a machine whose wifi stopped working while the
 # lab was up: Docker gives every bridge network it creates a route on the
@@ -88,6 +92,23 @@ import sys, urllib.request
 try:
     urllib.request.urlopen(sys.argv[1], timeout=3)
     sys.exit(0)
+except Exception:
+    sys.exit(1)
+PY
+  fi
+}
+
+http_post() { # url -> body on stdout, non-zero if it did not answer
+  local url="$1"
+  if have curl; then
+    curl -fsS -m 240 -X POST "$url" 2>/dev/null
+  else
+    python3 - "$url" <<'PY' 2>/dev/null
+import sys, urllib.request
+req = urllib.request.Request(sys.argv[1], data=b"", method="POST")
+try:
+    with urllib.request.urlopen(req, timeout=240) as response:
+        sys.stdout.write(response.read().decode())
 except Exception:
     sys.exit(1)
 PY
@@ -172,8 +193,13 @@ ensure_frontend_deps() {
     return 0
   fi
   note "installing frontend dependencies (first run, or the lockfile changed)"
-  (cd "$ROOT/frontend" && npm install --no-audit --no-fund) ||
-    die "npm install failed"
+  # `npm ci`, not `npm install`. `npm ci` installs exactly what the lockfile
+  # says and never writes the lockfile back; `npm install` reconciles the two
+  # and rewrites the lockfile, so running the app silently edited a file that
+  # is meant to be committed -- every run left the working tree dirty with a
+  # lockfile nobody had changed on purpose.
+  (cd "$ROOT/frontend" && npm ci --no-audit --no-fund) ||
+    die "npm ci failed"
   ok "frontend dependencies installed"
 }
 
@@ -290,12 +316,37 @@ lab_up() {
   running="$(lab_ps --status running -q)"
   if [ "$running" -gt 0 ]; then
     ok "lab: $running router containers running"
-    warn "if these routers were configured before, press Deploy in the UI to re-apply"
-    warn "  the OSPF configuration — a restarted container may not have the same"
-    warn "  interface names the saved frr.conf refers to."
+    # A restarted container is handed its interfaces again in a different
+    # order, so the saved frr.conf names the wrong interface for each link --
+    # and FRR accepts that without complaint. The adjacencies then never form
+    # and the lab goes on measuring a network that has not converged. So the
+    # configuration is re-applied to the running routers, addressed by the
+    # address each link is supposed to hold rather than by a guessed index.
+    lab_reapply
   else
     warn "lab: started but nothing is running yet; see .run/lab.log"
   fi
+}
+
+# Put the planned OSPF configuration onto the lab that is running now.
+#
+# Interface names are not stable across a container restart: Docker hands
+# eth0..ethN out again in a different order, so a saved frr.conf puts each
+# area and cost on the wrong interface. FRR accepts that silently, the
+# adjacencies never form, and every figure the Analytics page reports then
+# describes a network that has never converged. Re-applying reads the live
+# interface map and addresses each interface by the address its link holds.
+lab_reapply() {
+  if ! http_ok "$API_URL/health"; then
+    note "lab: not re-applied — the API is not answering on $API_URL"
+    return 0
+  fi
+  local body
+  if ! body="$(http_post "$API_URL/api/lab/reapply")"; then
+    warn "lab: could not re-apply the OSPF configuration — press Deploy in the UI"
+    return 0
+  fi
+  ok "lab: OSPF configuration re-applied to the running routers"
 }
 
 # --------------------------------------------------------------------------- #
@@ -373,6 +424,14 @@ do_reseat() {
   "$python_bin" "$ROOT/backend/lab_doctor.py" --reseat
 }
 
+do_reapply() {
+  printf '%sRe-applying the OSPF configuration%s\n' "$C_DIM" "$C_OFF"
+  if ! http_ok "$API_URL/health"; then
+    die "the API is not answering on $API_URL — start it with ./start.sh"
+  fi
+  lab_reapply
+}
+
 do_start() {
   check_prereqs
   ensure_backend_deps
@@ -432,6 +491,7 @@ while [ $# -gt 0 ]; do
     --no-lab)  LAB_MODE="never" ;;
     --stop)    ACTION="stop" ;;
     --status)  ACTION="status" ;;
+    --reapply) ACTION="reapply" ;;
     --doctor)  ACTION="doctor" ;;
     --reseat)  ACTION="reseat" ;;
     -h | --help) usage; exit 0 ;;
@@ -441,9 +501,10 @@ while [ $# -gt 0 ]; do
 done
 
 case "$ACTION" in
-  start)  do_start ;;
-  stop)   do_stop ;;
-  status) do_status ;;
-  doctor) do_doctor ;;
-  reseat) do_reseat ;;
+  start)   do_start ;;
+  stop)    do_stop ;;
+  status)  do_status ;;
+  reapply) do_reapply ;;
+  doctor)  do_doctor ;;
+  reseat)  do_reseat ;;
 esac

@@ -1,21 +1,17 @@
-import React, { useState } from 'react';
-import { NetworkDevice, NetworkCable, PacketSimulationState, PacketHop, PacketGeneratorConfig } from '../types/network';
+import React, { useEffect, useMemo, useState } from 'react';
+import { NetworkDevice, NetworkCable, PacketSimulationState, PacketGeneratorConfig } from '../types/network';
 import { discoverRoute } from '../utils/networkRouting';
+import { isUnassignedIp } from '../utils/validation';
 import {
   Send,
   X,
   Play,
   ArrowRight,
-  CheckCircle,
-  AlertCircle,
   Clock,
-  Layers,
   Activity,
-  Zap,
   Settings,
   Pause,
 } from 'lucide-react';
-import { DeviceIcon } from './DeviceIcons';
 
 interface PacketSimulatorModalProps {
   isOpen: boolean;
@@ -40,13 +36,33 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
   onStopPacketGenerator,
   packetGeneratorConfig,
 }) => {
-  const [sourceId, setSourceId] = useState<string>(devices[0]?.id || '');
-  const [targetId, setTargetId] = useState<string>(
-    devices.length > 1 ? devices[devices.length - 1]?.id : devices[0]?.id || ''
-  );
+  const [sourceId, setSourceId] = useState<string>('');
+  const [targetId, setTargetId] = useState<string>('');
   const [speed, setSpeed] = useState<number>(400); // 400ms pause between hops
   const [genCount, setGenCount] = useState<number>(100);
   const [genInterval, setGenInterval] = useState<number>(100);
+
+  // The pickers have to follow the canvas. Their initial values used to be
+  // read from `devices` at mount, but this modal is always mounted -- it only
+  // hides itself -- so "mount" was the first render of the whole app, when a
+  // fresh account has no devices at all. Both selects were then empty for the
+  // rest of the session, and a device deleted after the modal first opened
+  // left the picks pointing at something that no longer existed.
+  const deviceIds = useMemo(() => new Set(devices.map((d) => d.id)), [devices]);
+
+  useEffect(() => {
+    setSourceId((current) =>
+      current && deviceIds.has(current) ? current : devices[0]?.id ?? ''
+    );
+  }, [devices, deviceIds]);
+
+  useEffect(() => {
+    setTargetId((current) => {
+      // A target that is still on the canvas and is not the source is kept.
+      if (current && deviceIds.has(current) && current !== sourceId) return current;
+      return devices.find((d) => d.id !== sourceId)?.id ?? '';
+    });
+  }, [devices, deviceIds, sourceId]);
 
   if (!isOpen) return null;
 
@@ -92,6 +108,7 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
           <button
             id="packet-sim-close-btn"
             onClick={onClose}
+            aria-label="Close the packet simulator"
             className="p-1.5 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
           >
             <X className="w-4 h-4" />
@@ -115,7 +132,7 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
               >
                 {devices.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.name} ({d.type.toUpperCase()}) - {d.ipAddress}
+                    {d.name} ({d.type.toUpperCase()}) - {isUnassignedIp(d.ipAddress) ? 'unassigned' : d.ipAddress}
                   </option>
                 ))}
               </select>
@@ -138,7 +155,7 @@ export const PacketSimulatorModal: React.FC<PacketSimulatorModalProps> = ({
               >
                 {devices.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.name} ({d.type.toUpperCase()}) - {d.ipAddress}
+                    {d.name} ({d.type.toUpperCase()}) - {isUnassignedIp(d.ipAddress) ? 'unassigned' : d.ipAddress}
                   </option>
                 ))}
               </select>

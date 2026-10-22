@@ -1,7 +1,7 @@
 import React from 'react';
 import { DeviceType } from '../types/network';
 import { RouterIcon, SwitchIcon, PCIcon } from './DeviceIcons';
-import { Plus, GripVertical } from 'lucide-react';
+import { Plus } from 'lucide-react';
 
 interface DevicePaletteProps {
   onAddDevice: (type: DeviceType) => void;

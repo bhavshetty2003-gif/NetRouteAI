@@ -20,7 +20,7 @@ Support) and Obsidian all render these natively.
 | 5 | [Reading the machine's own networks](#5-reading-the-machines-own-networks) | `backend/host_networks.py` |
 | 6 | [`deploy` — build, start, configure, prove](#6-deploy--build-start-configure-prove) | `backend/lab_deploy.py` |
 | 7 | [`configure` — vtysh plus read-back](#7-configure--vtysh-plus-read-back) | `backend/lab_deploy.py` |
-| 8 | [OSPF path resolution — three sources](#8-ospf-path-resolution--three-sources) | `backend/ospf_ai_service.py` |
+| 8 | [OSPF path resolution — two live sources, or a raised refusal](#8-ospf-path-resolution--two-live-sources-or-a-raised-refusal) | `backend/ospf_ai_service.py` |
 | 9 | [`_rib_walk` — walking the OSPF RIB](#9-_rib_walk--walking-the-ospf-rib) | `backend/ospf_ai_service.py` |
 | 10 | [`rank_paths` — AI path scoring](#10-rank_paths--ai-path-scoring) | `backend/ai_route_service.py` |
 | 11 | [`compare_ospf_vs_ai` — the Analytics run](#11-compare_ospf_vs_ai--the-analytics-run) | `backend/ospf_ai_service.py` |
@@ -144,7 +144,7 @@ whose address was released stops the canvas claiming to hold it (I4).
 
 ## 3. `resolve_plan` — the addressing algorithm
 
-`backend/lab_deploy.py:173`. This is the single allocator. It backs both
+`backend/lab_deploy.py:255`. This is the single allocator. It backs both
 `POST /api/lab/plan` and `POST /api/lab/deploy`.
 
 ```mermaid
@@ -258,7 +258,7 @@ and drawing the link again returns it.
 
 ## 4. `_addresses_for` — one link's address
 
-`backend/lab_deploy.py:482`
+`backend/lab_deploy.py:567`
 
 ```mermaid
 flowchart TD
@@ -436,7 +436,7 @@ machine its wifi.
 
 ## 6. `deploy` — build, start, configure, prove
 
-`backend/lab_deploy.py:1325`
+`backend/lab_deploy.py:1658`
 
 ```mermaid
 flowchart TD
@@ -461,13 +461,14 @@ flowchart TD
     WAITQ -- yes --> CONF["configure(plan, client)<br/>— diagram 7"]
     CONF -->|DeployError| E3["DeployError: the generated OSPF<br/>configuration did not match<br/>the running lab: reasons"]
     CONF --> SAVE["save_plan(plan, assignments)<br/>backend/labs/current/plan.json<br/>gitignored — it is output"]
-    SAVE --> SETTLE["sleep 12s — OSPF needs to form<br/>adjacencies before anything<br/>is worth measuring"]
-    SETTLE --> OK(["200: routers, links, areas,<br/>interface assignments, notes"])
+    SAVE --> CONV["wait_for_convergence(client, plan)<br/>— the lab is only 'deployed' once<br/>OSPF has finished learning it<br/>(see below)"]
+    CONV --> OK(["200: routers, links, areas,<br/>interface assignments, notes,<br/>convergence {converged, waited_seconds,<br/>routes, neighbours, expected_neighbours}"])
 
     ERR["POST /api/lab/deploy/teardown"] --> DOWN["compose down --volumes --remove-orphans"]
     DOWN --> PURGE2["_remove_lab_resources(client)<br/>compose down only knows the services<br/>in the file on disk — orphans from an<br/>older topology survive it"]
 
     style CONF fill:#fdf0e6,stroke:#b5651d
+    style CONV fill:#fdf0e6,stroke:#b5651d
     style PURGE fill:#fdf0e6,stroke:#b5651d
     style GUARD fill:#fdf0e6,stroke:#b5651d
 ```
@@ -503,11 +504,77 @@ is `netrouteai` for the lab and `netrouteai-app` for the application stack. The
 name filter `"netrouteai"` is a *substring* match and would also match
 `netrouteai-app_default` — the network the running UI depends on.
 
+### The deploy waits for OSPF to converge
+
+`backend/lab_deploy.py:1464` · `wait_for_convergence(client, plan)`
+
+A deploy that returns while OSPF is still computing routes hands back a lab
+that is not yet measurable, and the Analytics page measures it immediately and
+reports the pair as unreachable — a false negative from a network that had not
+finished starting. The same pair measured perfectly a minute later, so it read
+as a routing fault.
+
+The wait has two parts, and both must hold at the same moment:
+
+```mermaid
+flowchart TD
+    START(["wait_for_convergence(client, plan)"]) --> POLL["every 2s, for every router:<br/>show ip route ospf → route count<br/>show ip ospf neighbor → Full count"]
+    POLL --> EXPECT["expected = one adjacency per<br/>router-to-router link, from the plan<br/>(a link to a PC has no OSPF<br/>on the far end and is not counted)"]
+    EXPECT --> ADJ{"every router's Full count<br/>≥ its expected count, and<br/>its route count ≥ its degree?"}
+    ADJ -- no --> WAIT["sleep 2s, poll again"]
+    ADJ -- yes --> SINCE["remember when the last<br/>adjacency appeared"]
+    SINCE --> QUIET{"have the route counts been<br/>unchanged for 8s, counting from<br/>the later of 'last change' and<br/>'adjacencies up'?"}
+    QUIET -- no --> WAIT
+    QUIET -- yes --> DONE(["converged: true<br/>waited_seconds, settled_seconds,<br/>routes, neighbours,<br/>expected_neighbours"])
+    WAIT --> DEADLINE{"90s deadline reached?"}
+    DEADLINE -- no --> POLL
+    DEADLINE -- yes --> PARTIAL(["converged: false + a note:<br/>the lab is running but the tables<br/>may still be settling"])
+
+    style ADJ fill:#fdf0e6,stroke:#b5651d
+    style QUIET fill:#fdf0e6,stroke:#b5651d
+```
+
+**Why the adjacency gate is not optional.** OSPF's hello interval is 10 s, so
+an adjacency cannot form sooner than that after the configuration is pushed —
+and until it forms, the router has nothing to run the SPF over. A freshly
+configured router shows only its directly connected routes (3 of them for a
+router with three links), and *that count does not change* for several seconds
+while the adjacencies are still forming. A wait that asked only "have the
+counts moved since the last poll?" therefore returned while the network had
+learned nothing at all. Measured on this lab:
+
+| t after the config is pushed | neighbours | routes on r1 |
+|---|---|---|
+| +6 s | 0 | 3 (connected only) |
+| +10 s | Full | 3 |
+| +12 s | Full | 8 |
+| +15 s | Full | 11 (final) |
+
+The route count is also how a router proves it is running OSPF on *every* one
+of its links: each link contributes one "is directly connected" OSPF entry, so
+a route count below the router's degree means an interface is not in OSPF at
+all.
+
+**Why the settle window counts from the last adjacency.** "The tables were
+already quiet" and "the tables have finished" are different claims, and before
+the adjacencies are up the tables are quiet for the wrong reason. The window
+is counted from the later of the two events — the last change in the counts and
+the moment the last adjacency appeared — so a quiet period that preceded OSPF
+cannot be mistaken for a converged network.
+
+**Why the counts and not a fixed number.** "Wait until every router has N
+routes" cannot be written, because N is a property of the area layout rather
+than of the topology: a router in a stub area legitimately has fewer routes
+than one in the backbone, and a topology with no area boundaries has a
+different number again. On this lab the final counts are 11 for the area-0
+routers, 16 for the area-1 and area-3 routers and 5 for the two area-3 leaf
+routers — all of them correct.
+
 ---
 
 ## 7. `configure` — vtysh plus read-back
 
-`backend/lab_deploy.py:940`
+`backend/lab_deploy.py:1024`
 
 ```mermaid
 flowchart TD
@@ -590,6 +657,43 @@ rather than as being in area 0.
 Area state read this way also means **ABR status is derived** from a router actually
 holding interfaces in more than one area, rather than asserted.
 
+### The re-apply: `configure()` without recreating anything
+
+`POST /api/lab/reapply` · `./start.sh --reapply`
+
+Diagram 7 begins by reading the **live** interface map (`_read_interfaces`) and
+addressing each interface by the address its link is supposed to hold, never by
+a guessed index. That is what makes it safe to run against a lab that is
+already up.
+
+Interface names are **not stable across a container restart**: Docker hands
+`eth0..ethN` out again in a different order, so a saved `frr.conf` lands each
+area and cost on the **wrong interface**. FRR accepts that silently, the
+adjacencies never form, and the lab goes on measuring a network that has never
+converged — every path and every figure on the Analytics page describes a
+network that does not exist. This is the one failure mode that is worse than a
+crash, because nothing reports it.
+
+So `reapply()`:
+
+1. loads the saved plan (`load_plan()`), refusing if there is none;
+2. checks every router container is **running** — a container that is still
+   starting has no interfaces to read, and the configuration would be built
+   from a reading taken before Docker had finished attaching the bridges;
+3. calls the same `configure(plan, client)` as `deploy()` — same live map, same
+   single write, same push, same read-back verification — but **no container is
+   recreated and no network is touched**;
+4. waits for the same convergence the deploy waits for — the push makes OSPF
+   recompute its tables, so the lab is only ready to measure once they have
+   settled (see the wait above).
+
+Verified end-to-end: after `docker compose -p netrouteai restart`, R1 had 0 OSPF
+neighbours; after the re-apply all ten routers reported the right counts
+(r1 3, r2 3, r3 3, r4 4, r5 3, r6 3, r7 4, r8 3, r9 3, r10 3), and the stale
+`Init/-` adjacencies expired on the dead timer. `./start.sh` performs this
+re-apply whenever it finds a lab already running, which is why it no longer
+warns "press Deploy in the UI to re-apply" — it does it.
+
 ---
 
 ## 8. OSPF path resolution — two live sources, or a raised refusal
@@ -601,7 +705,7 @@ path" is the single most consequential decision on the Analytics page.
 flowchart TD
     SRC["source, destination"] --> E2E["0. measure_path end-to-end FIRST:<br/>ping + traceroute, 12 ICMP requests<br/>(the refusal below quotes this measurement)"]
     SRC --> RIB["1. ospf_rib_path<br/>each router's 'show ip route ospf',<br/>longest-prefix walk over graph G — diagram 9"]
-    SRC --> TRACE["2. real_ospf_path<br/>traceroute: what is ACTUALLY<br/>being forwarded right now"]
+    SRC --> TRACE["2. real_ospf_path<br/>the traceroute already run by the<br/>end-to-end measurement — REUSED,<br/>not run again (an unreachable target<br/>costs 33 s per attempt)"]
 
     RIB --> RIBOK{"RIB walk succeeded AND<br/>ends at the destination?"}
     RIBOK -- yes --> PICK1["OSPF PATH = RIB<br/>basis: 'OSPF RIB on each router<br/>(show ip route ospf)'"]
@@ -803,7 +907,7 @@ flowchart TD
     subgraph E2E["End-to-end, from the real source container"]
         direction TB
         E0["measure_path(source, destination, count=12)"] --> ETRY["try EACH of the destination's addresses<br/>in turn — a multi-homed device may have<br/>one that is unroutable from here.<br/>First one that answers wins."]
-        ETRY --> ETR["traceroute, up to 3 attempts with<br/>-i 1 -q 1 — FRR rate-limits ICMP replies,<br/>so one run can return '*' mid-trace.<br/>The most complete run wins, earlier<br/>answers kept where a later run blanks."]
+        ETRY --> ETR["traceroute: attempt 1 asks for 3 probes per hop,<br/>a retry asks for 1, with a 1 s sleep between<br/>attempts. FRR rate-limits ICMP replies, so one<br/>run can return '*' mid-trace; the most complete<br/>run wins, earlier answers kept where a later<br/>run blanks. NO '-i': BusyBox traceroute reads<br/>'-i' as *interface*, not interval."]
         ETR --> ERES["resolution = 100/12 = 8.33%<br/>loss is a ratio of whole packets:<br/>6 packets cannot express a loss<br/>below 17%, so one drop read as 1/6"]
     end
 
@@ -818,14 +922,33 @@ flowchart TD
     VERDICT --> ACTIVE["_active_method — report in_effect honestly:<br/>'the routers are forwarding this path'<br/>vs 'selected, but the routers are still<br/>forwarding OSPF; apply to install a route'"]
     ACTIVE --> BUILD["_build_comparison — diagram 13"]
     BUILD --> DIAG{"_diagnose — explain WHY<br/>if unreachable"}
-    DIAG --> CONV{"convergence requested<br/>and a transit link exists?"}
-    CONV -- yes --> CONVM["measure_convergence — diagram 17"]
-    CONV -- no --> OUT
-    CONVM --> OUT(["200: ospf, ai, comparison rows,<br/>path_taken, end_to_end,<br/>ai_ranking, model, confidence,<br/>active, convergence"])
+    DIAG --> CONVLINK["convergence_link = the first transit<br/>interface on the path — the link a<br/>convergence measurement WOULD break.<br/>The measurement itself is a separate<br/>call: it takes the link down."]
+    CONVLINK --> OUT(["200: ospf, ai, comparison rows,<br/>path_taken, end_to_end,<br/>ai_ranking, model, confidence,<br/>training_basis, active, convergence_link"])
 
     style E2E fill:#e8f4f8,stroke:#0d6e85
     style VERDICT fill:#eef7ee,stroke:#3d7a3d
 ```
+
+### Convergence is not part of this run
+
+`measure_convergence` takes a link **down** and waits up to 60 s for OSPF to
+re-converge, so folding it into the comparison meant one slow, destructive
+figure held up every measurement and the page claimed a convergence number it
+had never asked for. It is now `POST /api/lab/convergence` with its own
+**Measure convergence** button (diagram 17). `include_convergence` is still
+accepted on the request so an older client does not get a 422, but it is inert.
+This diagram reports *which link* would be broken, so the page can say what a
+measurement would affect before anything is.
+
+### The traceroute is not run twice
+
+`real_ospf_path` used to run its own traceroute, and it traced `ip_index[destination]`
+— the address on the destination's eth0, which on a multi-homed router is often
+not routable from the source. An unreachable target waits out the whole hop
+budget (12 hops × 3 probes × 1 s = 33 s) before admitting it knows nothing, and
+with retries that was up to a minute and a half per comparison. The end-to-end
+measurement has already settled the address (one ping) and traced it, so both
+are passed in and no second trace is run.
 
 ### Why 12 packets
 
@@ -850,7 +973,7 @@ claiming a *match* would be worse. The page shows the gaps.
 ```mermaid
 flowchart TD
     PATH["a path of N routers"] --> SHORT{"N &lt; 2?"}
-    SHORT -- yes --> NONE["{segments: [], total_latency_ms: null,<br/>reachable: false}"]
+    SHORT -- yes --> NONE["{segments: [], total_latency_ms: null,<br/>latency_margin_ms: null,<br/>worst_segment_loss_percent: null,<br/>measured_segments: 0, reachable: false}<br/>the full key set, so a caller that reads<br/>measured_segments gets a number and not a KeyError"]
     SHORT -- no --> SEG["for each consecutive pair (src, dst)"]
 
     SEG --> CAND["candidate targets = the addresses on the<br/>connecting subnet, else any address of dst"]
@@ -1110,7 +1233,10 @@ Verified responsive to shaping: R12→R5 reads 6.576 Mbps, 3.411 Mbps under
 
 ```mermaid
 flowchart TD
-    START(["source, destination, link {container, interface}, timeout 60s"]) --> LAB["discover_lab; resolve ids to<br/>container + target IP"]
+    START(["source, destination, link {container, interface}?, timeout 60s"]) --> PICK{"link given?"}
+    PICK -- no --> CHOOSE["_first_transit_link(ospf_path, lab)<br/>the FIRST transit interface on the path<br/>between the two routers — the link whose<br/>failure this figure is about.<br/>Breaking some other link would measure<br/>a failure the pair never experienced.<br/>None found → 503."]
+    PICK -- yes --> LAB["discover_lab; resolve ids to<br/>container + target IP"]
+    CHOOSE --> LAB
     LAB --> BEFORE["ip -s link show &lt;if&gt;<br/>was the link already up?"]
 
     BEFORE --> ALT{"_has_alternate_path(lab, container, iface)<br/>is there a second route across?"}
@@ -1151,6 +1277,19 @@ working correctly.
 - `destination_avoided_failed_link` catches the other false positive: a cut link can
   "converge" instantly when the measured pair never used it — R2→R6 does not cross
   R4–R5 — and calling that a convergence time measures a link the traffic avoided.
+
+### Why the link is optional
+
+The caller used to have to know the topology well enough to name a container and
+an interface. Leaving it out, the endpoint picks the **first transit interface
+on the path between the two routers**, taken from the live OSPF path — so the
+figure is about a link the pair really crosses. If no transit link can be
+found, the endpoint answers 503 with that reason rather than breaking
+something arbitrary.
+
+This measurement is **deliberately separate** from `/api/analytics/live`: it
+takes a link down for the duration, so folding it into every comparison made
+every comparison slow and changed the network it was measuring. See diagram 11.
 
 ---
 
@@ -1234,7 +1373,7 @@ flowchart TD
         I1 -- yes --> I2["apply_impairment on the FIRST HOP's egress interface"]
         I1 -- "no" --> I4
         I2 --> I3{"tbf rate limit?"}
-        I3 -- yes --> I3A["drive real ping load for 1.5s<br/>a rate limit only bites when there is<br/>traffic to queue"]
+        I3 -- yes --> I3A["drive real ping load for 1.5s<br/>a rate limit only bites when there is<br/>traffic to queue.<br/>The container name and the LITERAL target<br/>IPs are looked up from the lab's maps —<br/>the device id is neither."]
         I3 -- no --> I4
         I3A --> I4["BEFORE = queue state on every interface<br/>along the path (ip -s link + tc -s qdisc)"]
         I4 --> I5["throughput = measure_bandwidth(source→destination)<br/>sampled WHILE the profile is still in effect"]
@@ -1269,6 +1408,20 @@ would install competing `tc qdisc add root` rules on one interface, each
 `clear_impairment` would tear down the others, and a 1 Mbps tbf limit would starve
 unrelated measurements. That is exactly what made multi-hop pairs report as
 unreachable.
+
+The endpoint enforces the same rule **across requests**: a module-level lock and
+flag make a collection single-flight, answering **409** while one is running.
+Two collections at once would install competing shaping on the same interfaces
+and each would measure the other's.
+
+### Why the traffic generator used to do nothing
+
+`_drive_traffic` was handed a **device id** ("R1") where a Docker **container
+name** ("r1") was wanted, and device ids where **literal IP addresses** were
+wanted. Every lookup raised, the exception was swallowed, and no traffic was
+generated at all — so a tbf limit was installed on an interface with nothing to
+queue, which is precisely the case the function exists for. It now takes the
+container name and the target IPs.
 
 ### Why a clean lab is a poor teacher
 
@@ -1334,9 +1487,10 @@ The CLI terminal stays dark in **both** themes and has its own theme-invariant
 | Method | Path | Handler | Algorithm |
 |--------|------|---------|-----------|
 | POST | `/api/lab/plan` | `resolve_plan` | **Diagram 3 + 4** — no Docker touched |
-| POST | `/api/lab/deploy` | `deploy` → `resolve_plan` → `configure` | **Diagrams 6 + 7** |
+| POST | `/api/lab/deploy` | `deploy` → `resolve_plan` → `configure` → `wait_for_convergence` | **Diagrams 6 + 7** |
 | GET | `/api/lab/deploy` | `load_plan` / `deployed_lab_running` | drift check vs the canvas |
 | POST | `/api/lab/deploy/teardown` | `teardown` | `compose down --volumes` + networks + `labs/current` removed |
+| POST | `/api/lab/reapply` | `reapply` → `configure` → `wait_for_convergence` | **Diagram 7** — re-push the plan onto the running routers, addressed by IP |
 | GET | `/api/lab/status` | `discover_lab` | dynamically discovered devices, links, cost histogram |
 | POST | `/api/lab/ping` | `probe_ping` | literal-IP ping from one router's container |
 | POST | `/api/lab/measure` | `measure_path` | **Diagram 11** E2E block |
@@ -1355,6 +1509,38 @@ The CLI terminal stays dark in **both** themes and has its own theme-invariant
 | POST | `/api/dataset/collect` | `collect` | **Diagram 19** |
 | GET | `/api/dataset` | row counts | measured/synthetic split, class balance |
 | — | `scripts/audit_contrast.py` | — | **Diagram 20** |
+
+### `/api/lab/metrics` reads the container, not the host
+
+`probe_resources` used to read `/proc/stat`, `/proc/meminfo` and `/proc/loadavg`
+*inside* the container. Docker does not namespace the memory total or the load
+average, so every one of those is the **host's**: ten routers each reported the
+machine's entire RAM as their own, and the same CPU figure appeared on every
+device. The numbers looked plausible and were about nothing.
+
+The daemon's own accounting is per-container, so that is what is read now
+(`container.stats(stream=False)`), with the container's own cgroup files as the
+fallback:
+
+| Source | Files |
+|--------|-------|
+| Docker daemon | `container.stats(stream=False)` → `cpu_stats` / `precpu_stats` / `memory_stats` |
+| cgroup v2 | `/sys/fs/cgroup/cpu.stat` (`usage_usec`), `/sys/fs/cgroup/memory.current`, `/sys/fs/cgroup/memory.max` |
+| cgroup v1 | `/sys/fs/cgroup/cpu/cpuacct.usage` (ns), `/sys/fs/cgroup/memory/memory.usage_in_bytes`, `…/memory.limit_in_bytes` |
+
+The response says which source it used (`source: "docker stats"` / `"cgroup"`),
+so a figure is never presented without knowing where it came from. Verified
+live: R1 reported 4.98 % CPU and R10 0.19 %, with ~12 MB used per router.
+
+### Every exec has a timeout
+
+The Docker SDK has no timeout on `exec_run`, and its `exec_start` does not
+accept one either, so a command that never returned held the HTTP request open
+until the daemon's own 60-second read timeout fired — and a caller that asked
+for five seconds sat there for a minute. `_exec` now applies the limit *inside*
+the container with `timeout -k 2 <secs>`, and if the image has no `timeout`
+binary (exit 127) it re-runs the command bare rather than reporting a failure
+that has nothing to do with the command itself.
 
 ---
 

@@ -3,14 +3,8 @@ import { ActiveNavTab } from '../types/network';
 import { currentTheme, toggleTheme, type Theme } from '../utils/theme';
 import {
   Network,
-  Bell,
-  User,
   Moon,
   Sun,
-  Layers,
-  Cpu,
-  ShieldCheck,
-  CheckCircle2,
   Compass,
 } from 'lucide-react';
 import { ProfileMenu } from './ProfileMenu';
@@ -37,18 +31,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   onUserUpdated,
   onSignOut,
 }) => {
-  const [showNotifications, setShowNotifications] = useState(false);
   // Read from the document rather than initialised to `true`: `index.html` has
   // already applied the stored preference (or the OS one) to <html> before
   // React mounts, so a hardcoded default would show the wrong icon on every
   // reload in the cream theme.
   const [theme, setTheme] = useState<Theme>(() => currentTheme());
-
-  const notifications = [
-    { id: '1', title: 'OSPF Adjacency Full', desc: 'R1 and R2 formed bidirectional peer on Gi0/1', time: '2m ago' },
-    { id: '2', title: 'Cisco IOS Boot Complete', desc: 'All 6 initial network devices operational', time: '5m ago' },
-    { id: '3', title: 'NetRouteAI Engine Ready', desc: 'Packet hop-by-hop simulator initialized', time: '10m ago' },
-  ];
 
   return (
     <header
@@ -122,40 +109,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           {theme === 'dark' ? <Moon className="w-4 h-4 text-accent" /> : <Sun className="w-4 h-4 text-warn" />}
         </button>
 
-        {/* Notifications Popover Toggle */}
-        <div className="relative">
-          <button
-            id="navbar-notifications-btn"
-            onClick={() => setShowNotifications(!showNotifications)}
-            className="p-2 rounded-xl bg-panel hover:bg-raised border border-line text-ink-soft hover:text-accent relative transition-colors"
-          >
-            <Bell className="w-4 h-4" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-accent" />
-          </button>
-
-          {showNotifications && (
-            <div
-              id="notifications-popover"
-              className="absolute right-0 mt-2 w-80 bg-panel border border-line rounded-xl shadow-2xl p-3 z-50 text-xs"
-            >
-              <div className="flex items-center justify-between pb-2 mb-2 border-b border-line font-semibold text-ink">
-                <span>System Notifications</span>
-                <span className="text-[10px] text-accent font-mono">3 New</span>
-              </div>
-              <div className="space-y-2">
-                {notifications.map((n) => (
-                  <div key={n.id} className="p-2 rounded-lg bg-panel/60 border border-line/80">
-                    <div className="flex items-center justify-between text-ink font-medium">
-                      <span>{n.title}</span>
-                      <span className="text-[10px] text-ink-faint font-mono">{n.time}</span>
-                    </div>
-                    <p className="text-[11px] text-ink-muted mt-0.5">{n.desc}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        {/* There used to be a notifications bell here. It carried three
+            hardcoded lines -- "R1 and R2 formed bidirectional peer on Gi0/1",
+            "All 6 initial network devices operational" -- and a permanent
+            unread dot with a "3 New" counter. None of it was ever measured:
+            the strings were compiled into the bundle, and the counter was a
+            literal. A bell is an invitation to read the badge as news about
+            the network, so a bell that always shows news is worse than no
+            bell. It is gone until there is something real to report. */}
 
         {/* The signed-in account. This used to be a hardcoded "NetEng User /
             CCNA / CCNP Sim" pill, which asserted an identity that did not

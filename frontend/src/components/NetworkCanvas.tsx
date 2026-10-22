@@ -8,7 +8,6 @@ import { getPointOnCable } from '../utils/networkRouting';import {
   XCircle,
   CheckCircle2,
   Lock,
-  Move,
   Trash2,
 } from 'lucide-react';
 import {
@@ -42,7 +41,6 @@ interface NetworkCanvasProps {
   onSelectAnnotation: (id: string | null, isMulti?: boolean) => void;
   onAddAnnotation: (item: AnnotationItem) => void;
   onUpdateAnnotation: (id: string, updates: Partial<AnnotationItem>) => void;
-  onDeleteAnnotation: (id: string) => void;
   onDuplicateAnnotation: (id: string) => void;
   onBringForwardAnnotation: (id: string) => void;
   onSendBackwardAnnotation: (id: string) => void;
@@ -87,7 +85,6 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
   onSelectAnnotation,
   onAddAnnotation,
   onUpdateAnnotation,
-  onDeleteAnnotation,
   onDuplicateAnnotation,
   onBringForwardAnnotation,
   onSendBackwardAnnotation,
@@ -409,9 +406,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
 
     // 4. Resizing Annotation Handle
     if (resizingHandle) {
-      const { annotationId, handle, initX, initY, initW, initH, initEndX = 0, initEndY = 0 } = resizingHandle;
-      const dx = world.x - (initX + (handle.includes('e') ? initW : 0));
-      const dy = world.y - (initY + (handle.includes('s') ? initH : 0));
+      const { annotationId, handle, initX, initY, initW, initH } = resizingHandle;
 
       if (handle === 'start') {
         onUpdateAnnotation(annotationId, { x: Math.round(world.x), y: Math.round(world.y) });
@@ -1472,7 +1467,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
                   {device.name}
                 </span>
                 <span className="text-[10px] text-ink-muted font-mono mt-0.5 bg-base/90 px-1 rounded">
-                  {device.ipAddress}
+                  {device.ipAddress || 'unassigned'}
                 </span>
               </div>
             </div>
@@ -1709,6 +1704,7 @@ export const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
           !!selectedCableId ||
           !!selectedAnnotationId
         }
+        hasAnnotationSelection={!!selectedAnnotationId}
         isLocked={activeSelectedAnnot?.isLocked}
         isGrouped={!!activeSelectedAnnot?.groupId}
         canGroup={selectedAnnotationIds.length > 1}

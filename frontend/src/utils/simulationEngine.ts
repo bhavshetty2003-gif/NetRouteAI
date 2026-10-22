@@ -1,4 +1,4 @@
-import { NetworkCable, NetworkDevice, Packet, PacketHop, PacketLogEntry } from '../types/network';
+import { NetworkCable, NetworkDevice, Packet } from '../types/network';
 import { discoverRoute, getPointOnCable } from './networkRouting';
 
 const PACKET_COLORS = [
@@ -43,8 +43,7 @@ export function createPacket(
 
 export function advancePacket(
   packet: Packet,
-  cables: NetworkCable[],
-  devices: NetworkDevice[]
+  cables: NetworkCable[]
 ): { packet: Packet; cableUpdates: Map<string, number> } {
   const cableUpdates = new Map<string, number>();
 

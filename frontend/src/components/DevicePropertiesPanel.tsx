@@ -89,13 +89,23 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
   }
 
   const validateAll = (): boolean => {
-    const ipRes = validateIPv4(ipAddress, 'Primary IP Address');
-    const maskRes = validateSubnetMask(subnetMask);
-    const gwRes = validateDefaultGateway(gateway);
+    // A device with no address yet is a legitimate state: the backend
+    // allocates the address when a link is drawn, and until then the device
+    // holds none. Requiring one here meant the panel refused to save a name
+    // change on a freshly drawn device, which is a worse answer than "this
+    // device has no address".
+    const hasAddress = !isUnassignedIp(ipAddress);
+    const ipRes = validateIPv4(ipAddress, 'Primary IP Address', true);
+    // The mask and the gateway belong to an address. With no address there is
+    // nothing for them to disagree with, so they are not required either.
+    const maskRes = hasAddress
+      ? validateSubnetMask(subnetMask)
+      : { isValid: true, cleanedValue: subnetMask };
+    const gwRes = validateDefaultGateway(gateway, true);
     // Both halves can be well-formed and still disagree: 10.0.0.3 wants
     // 255.0.0.0, so 255.255.255.0 is rejected here rather than saved.
     const pairRes =
-      ipRes.isValid && maskRes.isValid
+      ipRes.isValid && maskRes.isValid && hasAddress
         ? validateIpMaskPair(ipAddress, subnetMask)
         : { isValid: true };
 
@@ -138,7 +148,8 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
 
   const handleIpChange = (val: string) => {
     setIpAddress(val);
-    const res = validateIPv4(val, 'Primary IP Address');
+    // An empty field is allowed: it means "not assigned yet", not a typo.
+    const res = validateIPv4(val, 'Primary IP Address', true);
     setIpError(res.isValid ? null : res.error || 'Incorrect IP. Please rewrite.');
     if (res.isValid && res.cleanedValue && !isUnassignedIp(res.cleanedValue)) {
       // Typing 10.0.0.3 shows 255.0.0.0: the class of the address decides
@@ -151,6 +162,11 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
 
   const handleSubnetChange = (val: string) => {
     setSubnetMask(val);
+    // With no address there is no mask to disagree with.
+    if (isUnassignedIp(ipAddress)) {
+      setSubnetError(null);
+      return;
+    }
     const res = validateSubnetMask(val);
     if (!res.isValid) {
       setSubnetError(res.error || 'Incorrect Subnet Mask. Please rewrite.');
@@ -162,7 +178,7 @@ export const DevicePropertiesPanel: React.FC<DevicePropertiesPanelProps> = ({
 
   const handleGatewayChange = (val: string) => {
     setGateway(val);
-    const res = validateDefaultGateway(val);
+    const res = validateDefaultGateway(val, true);
     setGatewayError(res.isValid ? null : res.error || 'Incorrect Default Gateway. Please rewrite.');
   };
 

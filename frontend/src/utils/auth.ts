@@ -113,7 +113,7 @@ async function authFetch<T>(
     // The auth routes put the message in `detail` as {message, field}; older
     // or proxy-generated errors put a plain string there. Accept both.
     const detail = (body as { detail?: unknown } | null)?.detail;
-    let message = `Request failed (${response.status})`;
+    let message = `${action} failed (${response.status})`;
     let field: string | null = null;
 
     if (typeof detail === "string") {

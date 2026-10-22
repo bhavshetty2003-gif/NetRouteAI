@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Square,
   Circle,
@@ -20,7 +20,6 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
-  Layers,
   FolderPlus,
   FolderMinus,
   MousePointer2,
@@ -29,7 +28,6 @@ import {
   AnnotationItem,
   DEFAULT_PALETTE_COLORS,
   DrawingTool,
-  ShapeType,
 } from '../types/annotations';
 
 interface DrawingPaletteProps {

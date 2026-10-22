@@ -18,7 +18,6 @@ import {
   getLiveAnalytics,
   getLabStatus,
   measureBandwidth,
-  type DeployState,
   type LiveAnalytics,
 } from '../utils/api';
 
@@ -96,7 +95,6 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
   const [destination, setDestination] = useState('');
   const [data, setData] = useState<LiveAnalytics | null>(null);
   const [throughput, setThroughput] = useState<{ mbps: number | null; basis: string } | null>(null);
-  const [deployState, setDeployState] = useState<DeployState | null>(null);
   const [labOnline, setLabOnline] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -132,7 +130,6 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
     getDeployState()
       .then((state) => {
         if (cancelled) return;
-        setDeployState(state);
         setLabOnline((current) =>
           current === null ? state.running : current && state.running
         );
@@ -153,7 +150,7 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
       // 12 real ICMP echo requests. Six cannot resolve a loss percentage below
       // 17%, so a single dropped packet used to read as a sixth of the traffic
       // lost and anything smaller was impossible to express.
-      const result = await getLiveAnalytics(source, destination, false, 'ospf', PACKET_COUNT);
+      const result = await getLiveAnalytics(source, destination, 'ospf', PACKET_COUNT);
       setData(result);
       setMeasured(true);
       // Throughput is sampled on whatever interface carries this pair's traffic,
@@ -177,6 +174,11 @@ export const LiveMetricsPanel: React.FC<LiveMetricsPanelProps> = ({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      // The readings on screen were measured before this failure. Leaving them
+      // up would present a stale figure as a current one.
+      setData(null);
+      setThroughput(null);
+      setMeasured(false);
     } finally {
       setBusy(false);
     }

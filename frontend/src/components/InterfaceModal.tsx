@@ -1,6 +1,6 @@
 import React from 'react';
 import { NetworkDevice, NetworkInterface } from '../types/network';
-import { X, Network, CheckCircle2, AlertCircle, Plus } from 'lucide-react';
+import { X, Network, Plus } from 'lucide-react';
 import { DeviceIcon } from './DeviceIcons';
 
 interface InterfaceModalProps {
@@ -59,6 +59,7 @@ export const InterfaceModal: React.FC<InterfaceModalProps> = ({
           <button
             id="interface-modal-close-btn"
             onClick={onClose}
+            aria-label="Close the interface list"
             className="p-1.5 text-ink-muted hover:text-ink hover:bg-raised rounded transition-colors"
           >
             <X className="w-4 h-4" />
